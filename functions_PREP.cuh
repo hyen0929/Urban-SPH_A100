@@ -920,6 +920,100 @@ __global__ void KERNEL_variable_smoothing_length2D(int_t*g_str,int_t*g_end,part1
   P1[i].h=tmp_RR/tmp_flt;
 }
 
+__global__ void KERNEL_clc_IB_normal_vector3D(int_t* g_str, int_t* g_end, part1* P1, part3* P3)
+{
+    int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i >= k_num_part2) return;
+
+    // Process only IBM marker particles
+    if (P1[i].p_type < 1000) return;
+
+    int_t icell, jcell, kcell;
+    Real xi, yi, zi;
+    Real hi, tmp_A, search_range;
+    Real nx, ny, nz; // Normal vector components
+
+    xi = P1[i].x;
+    yi = P1[i].y;
+    zi = P1[i].z;
+    hi = P1[i].h;
+    tmp_A = calc_tmpA(hi);
+    search_range = k_search_kappa * hi;
+
+    // Find cell index for particle i
+    if ((k_x_max == k_x_min)) { icell = 0; }
+    else { icell = min(floor((xi - k_x_min) / k_dcell), k_NI - 1); }
+    if ((k_y_max == k_y_min)) { jcell = 0; }
+    else { jcell = min(floor((yi - k_y_min) / k_dcell), k_NJ - 1); }
+    if ((k_z_max == k_z_min)) { kcell = 0; }
+    else { kcell = min(floor((zi - k_z_min) / k_dcell), k_NK - 1); }
+
+    if (icell < 0) icell = 0; if (jcell < 0) jcell = 0; if (kcell < 0) kcell = 0;
+
+    // Initialize normal vector
+    nx = ny = nz = 0.0;
+
+    int_t ncell = P1[i].ncell;
+
+	if(abs(xi-0.764)<1e-5) nx=-1.0;
+	if(abs(xi-0.836)<1e-5) nx=1.0;
+	if(abs(yi+0.036)<1e-5) ny=-1.0;
+	if(abs(yi-0.036)<1e-5) ny=1.0;
+	if(abs(zi-0.0)<1e-5) nz=-1.0;
+	if(abs(zi-0.152)<1e-5) nz=1.0;
+
+    // // Loop over neighboring cells
+    // for (int_t z = -ncell; z <= ncell; z++) {
+    //     for (int_t y = -ncell; y <= ncell; y++) {
+    //         for (int_t x = -ncell; x <= ncell; x++) {
+    //             int_t k = idx_cell(icell + x, jcell + y, kcell + z);
+
+    //             if (((icell + x) < 0) || ((icell + x) > (k_NI - 1)) || ((jcell + y) < 0) || ((jcell + y) > (k_NJ - 1)) || ((kcell + z) < 0) || ((kcell + z) > (k_NK - 1))) continue;
+    //             if (g_str[k] != cu_memset) {
+    //                 int_t fend = g_end[k];
+    //                 for (int_t j = g_str[k]; j < fend; j++) {
+    //                     // Interact only with fluid particles
+    //                     if (P1[j].p_type < 1000) {
+    //                         Real xj, yj, zj, tdist;
+    //                         xj = P1[j].x;
+    //                         yj = P1[j].y;
+    //                         zj = P1[j].z;
+
+    //                         tdist = sqrt((xi - xj) * (xi - xj) + (yi - yj) * (yi - yj) + (zi - zj) * (zi - zj));
+
+    //                         if (tdist > 1e-9 && tdist < search_range) {
+    //                             Real tmp_dwij, mj, rhoj;
+    //                             tmp_dwij = calc_kernel_dwij(tmp_A, hi, tdist);
+    //                             mj = P1[j].m;
+    //                             rhoj = P1[j].rho;
+
+    //                             // Accumulate the gradient of the color field
+    //                             // This is equivalent to summing the kernel gradients from fluid particles
+    //                             Real vol_j = mj / rhoj;
+    //                             nx += vol_j * tmp_dwij * (xi - xj) / tdist;
+    //                             ny += vol_j * tmp_dwij * (yi - yj) / tdist;
+    //                             nz += vol_j * tmp_dwij * (zi - zj) / tdist;
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    // Normalize the vector
+    Real mag = sqrt(nx * nx + ny * ny + nz * nz);
+    if (mag > 1e-9) {
+        P3[i].nx = nx / mag;
+        P3[i].ny = ny / mag;
+        P3[i].nz = nz / mag;
+    } else {
+        P3[i].nx = 0.0;
+        P3[i].ny = 0.0;
+        P3[i].nz = 0.0;
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 // __global__ void KERNEL_clc_correction_preLaplacian(int_t*g_str,int_t*g_end,part1*P1,part3*P3)
 // {

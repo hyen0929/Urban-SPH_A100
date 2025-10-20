@@ -96,7 +96,8 @@ typedef struct particles_array_3{
 	Real dk_turb, de_trub;        // Turbulent kinetic energy, dissipation rate(for Deardorff model,KDH)
 	// Real virial,radius;
 
-	Real cc;																// color code
+	Real cc;
+	Real nx, ny, nz;																// color code
 	// Real lambda;
 
 	Real Cm[Correction_Matrix_Size][Correction_Matrix_Size];

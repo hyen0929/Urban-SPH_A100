@@ -263,6 +263,22 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 			}
 		}
 
+		if (!strncmp(data_label,"normal",5)) {
+			fprintf(outFile_vtk,"normal\t3\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P3[i].nx);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(P3[i].ny);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(P3[i].nz);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
 		// if (!strncmp(data_label,"v_force",5)) {
 		// 	fprintf(outFile_vtk,"fv\t3\t%d\tfloat\n",Nparticle);
 		// 	for(i=0;i<nop;i++){

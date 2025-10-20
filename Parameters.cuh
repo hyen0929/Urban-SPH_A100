@@ -136,4 +136,8 @@
 #define Prt_sgs 0.7
 #define Sigk_sgs 1.0
 
+#define k_ib_cx 0.0
+#define k_ib_cy 0.0
+#define k_ib_cz 0.0
+
 extern __device__ float us_update;

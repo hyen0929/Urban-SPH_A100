@@ -387,11 +387,21 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
   	// P1[i].uz_i = tmpuz/(filt+1e-10);
 
 	// the force applied to solid for no-slip condition
-	P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
-	P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
-  	P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
-	// if(i==577524) printf("IBM force=%f\n\n",(uxi-tmpux/(filt+1e-10))/t_dt);
-
+	// P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
+	// P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
+  	// P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+	{
+		Real ufx = tmpux/(filt+1e-10);
+		Real ufy = tmpuy/(filt+1e-10);
+		Real ufz = tmpuz/(filt+1e-10);
+		Real Umag = sqrt(ufx*ufx+ufy*ufy+ufz*ufz)+1e-8;
+		Real tau_s = 2.0f*P1[i].h/Umag;
+		Real beta_t = min(1.0f, t_dt/max(tau_s,1e-6f));
+		printf("beta_t=%f t_dt=%f tau_s=%f Umag=%f\n",beta_t,t_dt,tau_s,Umag);
+		P1[i].fbx = rhoi * beta_t * (uxi-ufx)/t_dt;
+		P1[i].fby = rhoi * beta_t * (uyi-ufy)/t_dt;
+	  	P1[i].fbz = rhoi * beta_t * (uzi-ufz)/t_dt;
+	}
 	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
 }
 
@@ -417,7 +427,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	zi=P1[i].z;
 	uxi=P1[i].ux;
 	uyi=P1[i].uy;
-  uzi=P1[i].uz;
+  	uzi=P1[i].uz;
 	rhoi=P1[i].rho;
 	tmp_h=IBM_length*P1[i].h;
 	tmp_A=calc_tmpA(tmp_h);

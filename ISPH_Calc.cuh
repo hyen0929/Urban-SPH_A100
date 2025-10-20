@@ -67,20 +67,26 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
-	b.x=(num_part2-1)/t.x+1;
-	if(dim==2) KERNEL_clc_gradient_correction_2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
-	if(dim==3) KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
-	cudaDeviceSynchronize();
+	if(count==0){
+		b.x=(num_part2-1)/t.x+1;
+		//if(dim==2) KERNEL_clc_gradient_correction_2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
+		KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
+		cudaDeviceSynchronize();
+		KERNEL_clc_color_field3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
+		cudaDeviceSynchronize();
+		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
+		cudaDeviceSynchronize();
+	}
 
 	// filter, reference density, p_type switch, penetration, normal gradient etc
-	if(dim==2) KERNEL_clc_prep2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
+	//if(dim==2) KERNEL_clc_prep2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
 	if(dim==3) KERNEL_clc_prep3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count,dt);
 	cudaDeviceSynchronize();
 
 	// Velocity condition for wall
 	b.x=(num_part2-1)/t.x+1;
 	if(noslip_bc==1){
-		if(dim==2) KERNEL_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1);
+		//if(dim==2) KERNEL_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1);
 		if(dim==3) KERNEL_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1);
 		cudaDeviceSynchronize();
 	}
@@ -94,7 +100,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// cudaDeviceSynchronize();
 
 	if(count==0){
-		if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		//if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		if(dim==3) KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
@@ -140,7 +146,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		// cudaDeviceSynchronize();
 
 		// Pressure condition for wall(Neumann boundary)
-		if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		//if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		if(dim==3) KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 
