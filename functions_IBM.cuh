@@ -306,7 +306,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	zi=P1[i].z;
 	uxi=P1[i].ux;
 	uyi=P1[i].uy;
-  uzi=P1[i].uz;
+  	uzi=P1[i].uz;
 	rhoi=P1[i].rho;
 	tmp_h=IBM_length*P1[i].h;
 	tmp_A=calc_tmpA(tmp_h);
@@ -340,16 +340,16 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 
 						xj=P1[j].x;
 						yj=P1[j].y;
-          	zj=P1[j].z;
+          				zj=P1[j].z;
 						itype=P1[j].i_type;
-						if(abs(xj-0.76)<1e-3 && abs(zj-0.156)<1e-3) continue;    // for AIJ Case H
+						//if(abs(xj-0.76)<1e-3 && abs(zj-0.156)<1e-3) continue;    // for AIJ Case H
 						// if(abs(xj-95)<1e-3 && abs(zj-19.5)<1e-3) continue;    // for AIJ Case HS
 
 						// if((itype!=2)|((buffer_typej!=Inlet)&(buffer_typej!=Outlet))){
 						if(itype!=4){
 							if(P1[j].p_type==1){
 
-            		tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
+            				tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
 									Real mj,uxj,uyj,uzj,rhoj,tmprho;
 									Real hj;
@@ -364,17 +364,17 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 									rhoj=P1[j].rho;
 									uxj=P1[j].ux;
 									uyj=P1[j].uy;
-            			uzj=P1[j].uz;
+            						uzj=P1[j].uz;
 
 									tmprho=mj/rhoj;
 									tmpux+=(uxj)*tmprho*twij;
 									tmpuy+=(uyj)*tmprho*twij;
-            			tmpuz+=(uzj)*tmprho*twij;
+            						tmpuz+=(uzj)*tmprho*twij;
 									filt+=tmprho*twij;
 								}
 							}
 						}
-          }
+          			}
 				}
 			}
 		}
@@ -384,12 +384,12 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	P1[i].concentration = filt;
 	// P1[i].ux_i = tmpux/(filt+1e-10);
 	// P1[i].uy_i = tmpuy/(filt+1e-10);
-  // P1[i].uz_i = tmpuz/(filt+1e-10);
+  	// P1[i].uz_i = tmpuz/(filt+1e-10);
 
 	// the force applied to solid for no-slip condition
 	P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
 	P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
-  P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+  	P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
 	// if(i==577524) printf("IBM force=%f\n\n",(uxi-tmpux/(filt+1e-10))/t_dt);
 
 	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
@@ -423,7 +423,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	tmp_A=calc_tmpA(tmp_h);
 	search_range=k_search_kappa*tmp_h;
 
-	if(abs(xi-0.76)<1e-3 && abs(zi-0.156)<1e-3) return;      // for AIJ Case H
+	//if(abs(xi-0.76)<1e-3 && abs(zi-0.156)<1e-3) return;      // for AIJ Case H
 	//if(abs(xi-95)<1e-3 && abs(zi-19.5)<1e-3) return;         // for AIJ Case HS
 
 	// calculate I,J,K in cell
@@ -454,13 +454,13 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 
 						xj=P1[j].x;
 						yj=P1[j].y;
-          	zj=P1[j].z;
+          				zj=P1[j].z;
 						itype=P1[j].i_type;
 
 						if(itype!=4){
 							if(P1[j].p_type==1000){
 
-            		tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
+            					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
 									Real mj,tdwx,tdwy,uxj,uyj,uzj,rhoj,tmprho;
 									Real fb_xm, fb_ym, fb_zm;
@@ -472,7 +472,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 									rhoj=P1[j].rho;
 									uxj=P1[j].ux;
 									uyj=P1[j].uy;
-              		uzj=P1[j].uz;
+              						uzj=P1[j].uz;
 
 									fb_xm = P1[j].fbx;
 									fb_ym = P1[j].fby;
@@ -486,7 +486,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 									tmprho=mj/rhoj;
 									fb_x+=fb_xm*twij*tmprho;
 									fb_y+=fb_ym*twij*tmprho;
-    							fb_z+=fb_zm*twij*tmprho;
+    								fb_z+=fb_zm*twij*tmprho;
 									filt+=tmprho*twij;
 								}
 							}
@@ -502,13 +502,12 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	// the force applied to fluid for no-slip condition
 	P1[i].fbx = fb_x/(filt+1e-10);
 	P1[i].fby = fb_y/(filt+1e-10);
-  P1[i].fbz = fb_z/(filt+1e-10);
+  	P1[i].fbz = fb_z/(filt+1e-10);
 	P1[i].concentration = filt;
 	//
 	// P1[i].fb_x = fb_x/(filt+1e-10);
 	// P1[i].fb_y = fb_y/(filt+1e-10);
-  // P1[i].fb_z = fb_z/(filt+1e-10);
-
+  	// P1[i].fb_z = fb_z/(filt+1e-10);
 }
 ////////////////////////////////////////////////////////////////////////
 __global__ void IBM_corrector(Real t_dt,Real ttime,part1*P1,part1*TP1,part2*P2,part3*P3)

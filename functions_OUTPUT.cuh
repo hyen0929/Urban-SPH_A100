@@ -139,7 +139,7 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="CaseH_n10_SSM(WL2,dt=1.0e-5)";
+	char DirName[256]="CaseH_n10_DDF(WL6,dt=2.5e-5,KGC,IBMFull)";
 	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
 	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
 	printf("Saving plot to '%s', count=%d\n",DirName,count);

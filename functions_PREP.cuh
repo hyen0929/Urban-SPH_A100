@@ -430,7 +430,7 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
                   					akk = 0.5*(nui+nuj)/Sigk_sgs;
                   					tmprr = ((xi-xj)*tdwxc + (yi-yj)*tdwyc + (zi-zj)*tdwzc)/(tdist*tdist+ 1e-12);
 
-                  					Tk += akk*(ki-kj)*tmprr*mj/rhoj;
+                  					//Tk += akk*(ki-kj)*tmprr*mj/rhoj;
 								}
 							}
 						}
@@ -466,9 +466,9 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
       		Real eps = Ce_sgs*ki*sqrt(ki)/tmp_cl;
       		Real dk = p + b - eps + Tk;
       		ki += dk*tdt;
-      		if (ki<0.0) ki=0.0;
+      		ki=max(ki,1e-4);    // Clipping for negative TKE
       		tvis_t = Ck_sgs*tmp_cl*sqrt(ki);
-      		if(isnan(tvis_t)) printf("ki=%f\n",ki);
+      		if(isnan(tvis_t)) printf("p=%f eps=%f dk=%f ki=%f tmp_cl=%f\n",p,eps,dk,ki,tmp_cl);
 
       		if(P1[i].buffer_type!=1){
         		P1[i].vis_t=tvis_t;

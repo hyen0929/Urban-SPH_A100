@@ -210,9 +210,9 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		HP1[i].uy=0.0;
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
-    Real scale_factor=0.16/0.16;       // 0.16/building_height
-    HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
-    HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
+    	Real scale_factor=0.16/0.16;       // 0.16/building_height
+    	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
+    	HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
     // if((HP1[i].x-765.0)*(HP1[i].x-765.0)+(HP1[i].y-0.0)*(HP1[i].y-0.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
     // else if((HP1[i].x-425.0)*(HP1[i].x-425.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
     // else if((HP1[i].x-435.0)*(HP1[i].x-435.0)+(HP1[i].y-155.0)*(HP1[i].y-155.0)+(HP1[i].z-12.5)*(HP1[i].z-12.5)<1e-3) {HP1[i].source=1;}

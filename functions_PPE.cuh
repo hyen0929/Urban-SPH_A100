@@ -30,6 +30,11 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 	rhoi=P1[i].rho;
 	tempi=P1[i].temp;
 
+	Real gc11, gc12, gc22, gc23, gc31, gc33;
+	gc11=P3[i].inv_cm_xx, gc12=P3[i].inv_cm_xy;
+	gc22=P3[i].inv_cm_yy, gc23=P3[i].inv_cm_yz;
+	gc31=P3[i].inv_cm_zx, gc33=P3[i].inv_cm_zz;
+
 	Real betai,Fb_i, divFb;
 	betai=thermal_expansion(tempi,1);
  	Fb_i= -Gravitational_CONST*betai*(tempi-tempb);
@@ -100,6 +105,11 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 									Real tdwy=tdwij*(yi-yj)/tdist;
 									Real tdwz=tdwij*(zi-zj)/tdist;
 
+									Real tdwxc, tdwyc, tdwzc;      // gradient correction
+									tdwxc=gc11*tdwx+gc12*tdwy+gc31*tdwz;
+									tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
+									tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
+
 									// Real hij=0.5*(hi+hj);
 									// Real tmp_Aij=calc_tmpA(hij);
 									// Real twij=calc_kernel_wij(tmp_Aij,hij,tdist);
@@ -115,18 +125,23 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 									// biy += mj/rhoj*(uyj-uyi)*tdwy*rhoi;
 									// biz += mj/rhoj*(uzj-uzi)*tdwz*rhoi;
 
-									bix += mj/rhoj*(uxj-uxi)*tdwx*(2.0*rhoi*rhoj/(rhoi+rhoj));
-									biy += mj/rhoj*(uyj-uyi)*tdwy*(2.0*rhoi*rhoj/(rhoi+rhoj));
-									biz += mj/rhoj*(uzj-uzi)*tdwz*(2.0*rhoi*rhoj/(rhoi+rhoj));
+									// bix += mj/rhoj*(uxj-uxi)*tdwx*(2.0*rhoi*rhoj/(rhoi+rhoj));
+									// biy += mj/rhoj*(uyj-uyi)*tdwy*(2.0*rhoi*rhoj/(rhoi+rhoj));
+									// biz += mj/rhoj*(uzj-uzi)*tdwz*(2.0*rhoi*rhoj/(rhoi+rhoj));
 
-									Real betaj=thermal_expansion(tempj,ptypej);
-									Real Fb_j= -Gravitational_CONST*betaj*(tempj-tempb);
-									divFb += mj/rhoj*(Fb_i-Fb_j)*tdwz;
+									bix += mj/rhoj*(uxj-uxi)*tdwxc*(2.0*rhoi*rhoj/(rhoi+rhoj));       // gradient correction
+									biy += mj/rhoj*(uyj-uyi)*tdwyc*(2.0*rhoi*rhoj/(rhoi+rhoj));
+									biz += mj/rhoj*(uzj-uzi)*tdwzc*(2.0*rhoi*rhoj/(rhoi+rhoj));
+
+									// Real betaj=thermal_expansion(tempj,ptypej);
+									// Real Fb_j= -Gravitational_CONST*betaj*(tempj-tempb);
+									// divFb += mj/rhoj*(Fb_i-Fb_j)*tdwz;
 
 									flt += (mj/rhoj)*twij;
 									unity += twij;
 
-									Real c = 2.0*mj/rhoj*((xi-xj)*tdwx+(yi-yj)*tdwy+(zi-zj)*tdwz)/tdist/tdist;
+									// Real c = 2.0*mj/rhoj*((xi-xj)*tdwx+(yi-yj)*tdwy+(zi-zj)*tdwz)/tdist/tdist;
+									Real c = 2.0*mj/rhoj*((xi-xj)*tdwxc+(yi-yj)*tdwyc+(zi-zj)*tdwzc)/tdist/tdist;    // gradient correction
 
 									Aij += c;
 									AijPij += c*(presj-P1[j].pres0);
