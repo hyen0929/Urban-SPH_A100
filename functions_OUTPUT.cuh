@@ -139,7 +139,7 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="CaseH_n10_DDF(WL6,dt=2.5e-5,KGC,IBMFull)";
+	char DirName[256]="CaseH_n10_DDF(WL6,dt=2.5e-5,KGC,IBM_WM,u=3.0,b=0.3)";
 	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
 	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
 	printf("Saving plot to '%s', count=%d\n",DirName,count);
@@ -327,21 +327,21 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 		// 	}
 		// }
 		//
-		// if (!strncmp(data_label,"b_force",5)) {
-		// 	fprintf(outFile_vtk,"fb\t3\t%d\tfloat\n",Nparticle);
-		// 	for(i=0;i<nop;i++){
-		// 		//if(P1[i].x>0){
-		// 		// if((P1[i].p_type==2)|(P1[i].p_type==9)){
-		// 		if(plot_flag[i]==1){
-		// 			val=FloatSwap(P1[i].fb_x);
-		// 			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
-		// 			val=FloatSwap(P1[i].fb_y);
-		// 			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
-		// 			val=FloatSwap(P1[i].fb_z);
-		// 			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
-		// 		}
-		// 	}
-		// }
+		if (!strncmp(data_label,"b_force",5)) {
+			fprintf(outFile_vtk,"fb\t3\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].fbx);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(P1[i].fby);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(P1[i].fbz);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
 
 		if (!strncmp(data_label,"MOST_force",7)) {
 			fprintf(outFile_vtk,"fm\t2\t%d\tfloat\n",Nparticle);

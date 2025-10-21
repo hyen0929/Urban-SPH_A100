@@ -69,14 +69,11 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
 	if(count==0){
 		b.x=(num_part2-1)/t.x+1;
-		//if(dim==2) KERNEL_clc_gradient_correction_2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
-		KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
-		cudaDeviceSynchronize();
-		KERNEL_clc_color_field3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
-		cudaDeviceSynchronize();
 		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 		cudaDeviceSynchronize();
 	}
+	KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
+	cudaDeviceSynchronize();
 
 	// filter, reference density, p_type switch, penetration, normal gradient etc
 	//if(dim==2) KERNEL_clc_prep2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
@@ -155,21 +152,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		//if(dim==3) KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
-
-	// if(count%10==0){
-	// 	// printf("save plot...........................\n");
-	// 	cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
-	// 	cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
-	// 	cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
-	// 	save_vtk_bin_single_flag(file_P1,file_P2,file_P3);
-	//
-	// 	// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
-	// 	cudaDeviceSynchronize();
-	//  }
-
-	// b.x=(num_part2-1)/t.x+1;
-	// if(dim==3) KERNEL_pressure_smoothing3D<<<b,t>>>(g_str,g_end,dev_SP1);
-	// cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // 압력힘 계산

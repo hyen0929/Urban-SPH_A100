@@ -308,6 +308,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	uyi=P1[i].uy;
   	uzi=P1[i].uz;
 	rhoi=P1[i].rho;
+
 	tmp_h=IBM_length*P1[i].h;
 	tmp_A=calc_tmpA(tmp_h);
 	search_range=k_search_kappa*tmp_h;
@@ -324,6 +325,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 
 	// tmpx=tmpy=tmppx=tmppy=tmp_R=0.0;
 	tmpux=tmpuy=tmpuz=filt=0.0;
+
 	for(int_t z=-P1[i].ncell;z<=P1[i].ncell;z++){
 		for(int_t y=-P1[i].ncell;y<=P1[i].ncell;y++){
 			for(int_t x=-P1[i].ncell;x<=P1[i].ncell;x++){
@@ -391,16 +393,42 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	// P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
   	// P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
 	{
+		// 주변 유체 보간 속도
 		Real ufx = tmpux/(filt+1e-10);
 		Real ufy = tmpuy/(filt+1e-10);
 		Real ufz = tmpuz/(filt+1e-10);
-		Real Umag = sqrt(ufx*ufx+ufy*ufy+ufz*ufz)+1e-8;
-		Real tau_s = 2.0f*P1[i].h/Umag;
-		Real beta_t = min(1.0f, t_dt/max(tau_s,1e-6f));
-		printf("beta_t=%f t_dt=%f tau_s=%f Umag=%f\n",beta_t,t_dt,tau_s,Umag);
-		P1[i].fbx = rhoi * beta_t * (uxi-ufx)/t_dt;
-		P1[i].fby = rhoi * beta_t * (uyi-ufy)/t_dt;
-	  	P1[i].fbz = rhoi * beta_t * (uzi-ufz)/t_dt;
+
+		// Surface normal vector
+		Real nx = P3[i].nx;
+		Real ny = P3[i].ny;
+		Real nz = P3[i].nz;
+		Real nmag = sqrt(nx*nx+ny*ny+nz*nz)+1e-20;
+		nx/=nmag; ny/=nmag; nz/=nmag;
+
+		// Normal/tangential 분해
+		Real un  = ufx*nx + ufy*ny + ufz*nz;
+		Real utx = ufx - un*nx;
+		Real uty = ufy - un*ny;
+		Real utz = ufz - un*nz;
+
+		// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
+		Real Ubtx = 3.0f, Ubty = 0.0f, Ubtz = 0.0f;
+
+		//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
+		Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
+		Real ys     = 0.5f * P1[i].h;
+		Real tau_f  = max(2.0f*ys/Ut_mag, t_dt);
+		//Real beta_t = fminf(0.5f, t_dt/tau_f); //  (고정값 원하면 0.3 등으로 대체)
+		Real beta_t =0.3f;
+
+		// Normal은 불침투(강제), Tangential은 β_t로 완화
+		Real corrx = (-un)*nx + beta_t*(Ubtx - utx);
+		Real corry = (-un)*ny + beta_t*(Ubty - uty);
+		Real corrz = (-un)*nz + beta_t*(Ubtz - utz);
+
+		P1[i].fbx = rhoi * corrx / t_dt;
+		P1[i].fby = rhoi * corry / t_dt;
+	  	P1[i].fbz = rhoi * corrz / t_dt;
 	}
 	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
 }
@@ -508,6 +536,14 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	}
 
 	// if (xi>215 && xi<225 && yi<35 && yi>25 && zi> 25 && zi<30)printf("i:(%f.1,%f.1,%f.1) j:(%f.1,%f.1,%f.1) search range=%f twij=%f fb_fluid=%f fb_solid=%f\n",xi,yi,zi,xj,yj,zj,search_range,tmp_twx,fb_x,fb_so);
+
+	if(filt < 1e-12){
+        P1[i].fbx = 0.0f;
+        P1[i].fby = 0.0f;
+        P1[i].fbz = 0.0f;
+        P1[i].concentration = 0.0f;
+        return;
+    }
 
 	// the force applied to fluid for no-slip condition
 	P1[i].fbx = fb_x/(filt+1e-10);
