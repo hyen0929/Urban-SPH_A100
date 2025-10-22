@@ -467,9 +467,8 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		Real utz = ufz - un*nz;
 
 		// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
-		Real Ubtx = 0.5*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
+		Real Ubtx = 0.2*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
 		Real Ubty = 0.0f, Ubtz = 0.0f;
-		Ubtx=0.0;
 
 		//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
 		Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
