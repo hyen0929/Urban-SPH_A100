@@ -285,6 +285,59 @@ __global__ void IBM_spreading_interpolation2D(int_t*g_str,int_t*g_end,part1*P1,p
 
 }
 
+// ---- [file scope] 상수 테이블: 컴파일타임 초기화, L1-cached constant memory ----
+__constant__ double CASEH_Z[30] = {         // device에서 직접 접근 가능
+    0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
+    0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
+    0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
+    0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
+    0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
+    0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
+};
+__constant__ double CASEH_U[30] = {
+    2.745, 2.935, 3.175, 3.435, 3.627,
+    3.824, 4.021, 4.210, 4.362, 4.491,
+    4.502, 4.586, 4.606, 4.712, 4.854,
+    4.993, 5.132, 5.449, 5.782, 6.077,
+    6.338, 6.588, 6.693, 6.751, 6.751,
+    6.751, 6.751, 6.751, 6.751, 6.751
+};
+constexpr int CASEH_N = 30;
+
+// ---- [device] 선형 보간 + 끝단 1차 외삽, STL 미사용 이진탐색 ----
+__device__ __forceinline__
+double Device_Interpolate_ux_caseH(double z_inp, double scale)
+{
+    const double z = scale * z_inp;
+
+    // 아래/위 외삽 (분모 0 방지용 eps)
+    if (z <= CASEH_Z[0]) {
+        const double dz = CASEH_Z[1] - CASEH_Z[0];
+        const double du = CASEH_U[1] - CASEH_U[0];
+        return CASEH_U[0] + (z - CASEH_Z[0]) * (du / (dz + 1e-300));   // device-safe
+    }
+    if (z >= CASEH_Z[CASEH_N - 1]) {
+        const double dz = CASEH_Z[CASEH_N - 1] - CASEH_Z[CASEH_N - 2];
+        const double du = CASEH_U[CASEH_N - 1] - CASEH_U[CASEH_N - 2];
+        return CASEH_U[CASEH_N - 2] + (z - CASEH_Z[CASEH_N - 2]) * (du / (dz + 1e-300)); // device-safe
+    }
+
+    // 이진탐색: CASEH_Z[lo] <= z < CASEH_Z[hi]
+    int lo = 0, hi = CASEH_N - 1;                                   // // Changed: std::lower_bound 제거
+    while (hi - lo > 1) {                                           // // Changed: device-safe binary search
+        const int mid = (lo + hi) >> 1;
+        if (z < CASEH_Z[mid]) hi = mid; else lo = mid;
+    }
+
+    // 선형 보간
+    const double z0 = CASEH_Z[lo], z1 = CASEH_Z[hi];
+    const double u0 = CASEH_U[lo], u1 = CASEH_U[hi];
+    const double t  = (z - z0) / (z1 - z0 + 1e-300);                 // // Changed: 0 division 보호
+    // fma(t, (u1-u0), u0) 사용 시 약간의 수치 이득 (컴파일러가 지원하면 자동 FMA)
+    return u0 + t * (u1 - u0);
+}
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
 {
@@ -403,7 +456,9 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		Real ny = P3[i].ny;
 		Real nz = P3[i].nz;
 		Real nmag = sqrt(nx*nx+ny*ny+nz*nz)+1e-20;
-		nx/=nmag; ny/=nmag; nz/=nmag;
+		nx=nx/nmag;
+		ny=ny/nmag;
+		nz=nz/nmag;
 
 		// Normal/tangential 분해
 		Real un  = ufx*nx + ufy*ny + ufz*nz;
@@ -412,23 +467,25 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		Real utz = ufz - un*nz;
 
 		// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
-		Real Ubtx = 3.0f, Ubty = 0.0f, Ubtz = 0.0f;
+		Real Ubtx = 0.5*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
+		Real Ubty = 0.0f, Ubtz = 0.0f;
+		Ubtx=0.0;
 
 		//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
 		Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
 		Real ys     = 0.5f * P1[i].h;
 		Real tau_f  = max(2.0f*ys/Ut_mag, t_dt);
 		//Real beta_t = fminf(0.5f, t_dt/tau_f); //  (고정값 원하면 0.3 등으로 대체)
-		Real beta_t =0.3f;
+		Real beta_t =1.0f;
 
 		// Normal은 불침투(강제), Tangential은 β_t로 완화
 		Real corrx = (-un)*nx + beta_t*(Ubtx - utx);
 		Real corry = (-un)*ny + beta_t*(Ubty - uty);
 		Real corrz = (-un)*nz + beta_t*(Ubtz - utz);
 
-		P1[i].fbx = rhoi * corrx / t_dt;
-		P1[i].fby = rhoi * corry / t_dt;
-	  	P1[i].fbz = rhoi * corrz / t_dt;
+		P1[i].fbx = Rho_air * corrx / t_dt;
+		P1[i].fby = Rho_air * corry / t_dt;
+	  	P1[i].fbz = Rho_air * corrz / t_dt;
 	}
 	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
 }
