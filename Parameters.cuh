@@ -140,4 +140,6 @@
 #define k_ib_cy 0.0
 #define k_ib_cz 0.0
 
+#define Rho_air 1.225
+
 extern __device__ float us_update;
