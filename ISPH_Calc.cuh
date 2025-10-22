@@ -45,8 +45,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(dev_P1,dev_SP1,sizeof(part1)*num_part2,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
 
-		// b.x=(num_part2-1)/t.x+1;
-		// if(dim==2) KERNEL_variable_smoothing_length2D<<<b,t>>>(g_str,g_end,dev_SP1);
+		// 완화거리 가변 모델 사용
 		// if(dim==3) KERNEL_variable_smoothing_length3D<<<b,t>>>(g_str,g_end,dev_SP1);
 		// cudaDeviceSynchronize();
 	}
@@ -76,20 +75,18 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	cudaDeviceSynchronize();
 
 	// filter, reference density, p_type switch, penetration, normal gradient etc
-	//if(dim==2) KERNEL_clc_prep2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
-	if(dim==3) KERNEL_clc_prep3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count,dt);
+	KERNEL_clc_prep3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count,dt);
 	cudaDeviceSynchronize();
 
 	// Velocity condition for wall
 	b.x=(num_part2-1)/t.x+1;
 	if(noslip_bc==1){
-		//if(dim==2) KERNEL_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1);
-		if(dim==3) KERNEL_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1);
+		KERNEL_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1);
 		cudaDeviceSynchronize();
 	}
 
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==3) KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
+	KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
 	cudaDeviceSynchronize();
 
 	// b.x=(num_part2-1)/t.x+1;
@@ -97,8 +94,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// cudaDeviceSynchronize();
 
 	if(count==0){
-		//if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		if(dim==3) KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
 
@@ -107,7 +103,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==3) KERNEL_advection_force3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
+	KERNEL_advection_force3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
 	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
@@ -121,9 +117,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	}
 
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==3) KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
-	if(dim==3) KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
 	// IBM_predictor<<<b,t>>>(dt_structure,time,dev_SP1,dev_SP2);
@@ -137,19 +133,18 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	for(int_t it=0;it<=0;it++){   // For iterative(implicit) pressure solver
 		// PPE.cuh
 		b.x=(num_part2-1)/t.x+1;
-		if(dim==3) KERNEL_PPE3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		cudaDeviceSynchronize();
+		KERNEL_PPE3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		// KERNEL_pressure_synchronize<<<b,t>>>(dev_SP1,dev_P1);
-		// cudaDeviceSynchronize();
+		cudaDeviceSynchronize();
 
 		// Pressure condition for wall(Neumann boundary)
-		//if(dim==2) KERNEL_Neumann_boundary2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		if(dim==3) KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 
-		//if(dim==3) KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		if(dim==3) KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		//if(dim==3) KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		// Pressure condition for outlet(Donothing boundary, Neumann boundary)
+		KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		//KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		//KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
 
@@ -158,25 +153,25 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==3) KERNEL_pressureforce3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	KERNEL_pressureforce3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
-	b.x=(num_part2-1)/t.x+1;
-	// if(dim==3) KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
-	cudaDeviceSynchronize();
+	if(MOST_boundary){
+		b.x=(num_part2-1)/t.x+1;
+		KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
+		cudaDeviceSynchronize();
+	}
 
 //-------------------------------------------------------------------------------------------------
 // Immersed Boundary Method (IBM)
 //-------------------------------------------------------------------------------------------------
 	// IBM force interpolation (fb for IB)
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==2) IBM_force_interpolation2D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	if(dim==3) IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
 	// IBM spreading interpolation (fb for fluid)
-	if(dim==2) IBM_spreading_interpolation2D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	if(dim==3) IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
@@ -194,7 +189,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	cudaDeviceSynchronize();
 
 	// b.x=(num_part2-1)/t.x+1;
-	// if(dim==3) KERNEL_xsph3D<<<b,t>>>(g_str,g_end,dev_P1);
+	// KERNEL_xsph3D<<<b,t>>>(g_str,g_end,dev_P1);
 	// cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
@@ -202,15 +197,15 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 
 	b.x=(num_part2-1)/t.x+1;
-	if(dim==3) KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
- 	//if(dim==3) KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	if(dim==3) KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	//if(dim==3) KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+ 	// KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	// KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
-	if(dim==3) KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
-	if(dim==3) KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 	// if(dim==3) KERNEL_Recycling3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	// cudaDeviceSynchronize();

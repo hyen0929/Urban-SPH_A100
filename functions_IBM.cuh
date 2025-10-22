@@ -1,3 +1,54 @@
+// ---- [file scope] 상수 테이블: 컴파일타임 초기화, L1-cached constant memory ----
+__constant__ double CASEH_Z[30] = {         // device에서 직접 접근 가능
+    0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
+    0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
+    0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
+    0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
+    0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
+    0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
+};
+__constant__ double CASEH_U[30] = {
+    2.745, 2.935, 3.175, 3.435, 3.627,
+    3.824, 4.021, 4.210, 4.362, 4.491,
+    4.502, 4.586, 4.606, 4.712, 4.854,
+    4.993, 5.132, 5.449, 5.782, 6.077,
+    6.338, 6.588, 6.693, 6.751, 6.751,
+    6.751, 6.751, 6.751, 6.751, 6.751
+};
+constexpr int CASEH_N = 30;
+
+// ---- [device] 선형 보간 + 끝단 1차 외삽, STL 미사용 이진탐색 ----
+__device__ __forceinline__
+double Device_Interpolate_ux_caseH(double z_inp, double scale)
+{
+    const double z = scale * z_inp;
+
+    // 아래/위 외삽 (분모 0 방지용 eps)
+    if (z <= CASEH_Z[0]) {
+        const double dz = CASEH_Z[1] - CASEH_Z[0];
+        const double du = CASEH_U[1] - CASEH_U[0];
+        return CASEH_U[0] + (z - CASEH_Z[0]) * (du / (dz + 1e-300));   // device-safe
+    }
+    if (z >= CASEH_Z[CASEH_N - 1]) {
+        const double dz = CASEH_Z[CASEH_N - 1] - CASEH_Z[CASEH_N - 2];
+        const double du = CASEH_U[CASEH_N - 1] - CASEH_U[CASEH_N - 2];
+        return CASEH_U[CASEH_N - 2] + (z - CASEH_Z[CASEH_N - 2]) * (du / (dz + 1e-300)); // device-safe
+    }
+
+    // 이진탐색: CASEH_Z[lo] <= z < CASEH_Z[hi]
+    int lo = 0, hi = CASEH_N - 1;                                   // // Changed: std::lower_bound 제거
+    while (hi - lo > 1) {                                           // // Changed: device-safe binary search
+        const int mid = (lo + hi) >> 1;
+        if (z < CASEH_Z[mid]) hi = mid; else lo = mid;
+    }
+
+    // 선형 보간
+    const double z0 = CASEH_Z[lo], z1 = CASEH_Z[hi];
+    const double u0 = CASEH_U[lo], u1 = CASEH_U[hi];
+    const double t  = (z - z0) / (z1 - z0 + 1e-300);                 // // Changed: 0 division 보호
+    // fma(t, (u1-u0), u0) 사용 시 약간의 수치 이득 (컴파일러가 지원하면 자동 FMA)
+    return u0 + t * (u1 - u0);
+}
 ////////////////////////////////////////////////////////////////////////
 __global__ void IBM_predictor(Real t_dt,Real ttime,part1*P1,part2*P2)
 {
@@ -13,7 +64,7 @@ __global__ void IBM_predictor(Real t_dt,Real ttime,part1*P1,part2*P2)
 	Real freq = 0.8*0.196*0.1/0.025;
 	Real A = 0.55*0.02;
 	P1[i].ux=0.0;
-	// // P1[i].uy=-0.02*sin(2.0*PI*freq*ttime)*(P1[i].p_type==1000);
+	// P1[i].uy=-0.02*sin(2.0*PI*freq*ttime)*(P1[i].p_type==1000);
 	// P1[i].uy=-2.0*PI*freq*A*sin(2.0*PI*freq*ttime);
 	P1[i].uy=0.0;
 	P1[i].uz=0.0;
@@ -74,269 +125,7 @@ __global__ void IBM_predictor(Real t_dt,Real ttime,part1*P1,part2*P2)
 	P2[i].uz0 = tuz0;
 
 	P2[i].rho_ref=1.0;
-
-	// if((P1[i].p_type>=2000)&&(ttime>0))	P1[i].rho=P2[i].rho_ref/(P1[i].jacob-1e-20);
-
 }
-////////////////////////////////////////////////////////////////////////
-__global__ void IBM_force_interpolation2D(Real t_dt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
-{
-	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
-	if(i>=k_num_part2) return;
-	if(P1[i].p_type<1000)	return;		// Immersed Boundary Method
-
-	int_t icell,jcell;
-	Real xi,yi,uxi,uyi;
-	Real rhoi;
-	Real search_range,tmp_h,tmp_A;
-	// Real tmpx,tmpy,tmppx,tmppy,tmp_R;
-	Real tmpux, tmpuy, filt;
-	int p_type_i;
-
-	p_type_i=P1[i].p_type;
-	xi=P1[i].x;
-	yi=P1[i].y;
-	uxi=P1[i].ux;
-	uyi=P1[i].uy;
-	rhoi=P1[i].rho;
-	tmp_h=IBM_length*P1[i].h;
-	tmp_A=calc_tmpA(tmp_h);
-	search_range=k_search_kappa*tmp_h;
-
-	// calculate I,J,K in cell
-	if((k_x_max==k_x_min)){icell=0;}
-	else{icell=min(floor((xi-k_x_min)/(k_x_max-k_x_min)*k_NI),k_NI-1);}
-	if((k_y_max==k_y_min)){jcell=0;}
-	else{jcell=min(floor((yi-k_y_min)/(k_y_max-k_y_min)*k_NJ),k_NJ-1);}
-	// out-of-range handling
-	if(icell<0) icell=0;	if(jcell<0) jcell=0;
-
-	// tmpx=tmpy=tmppx=tmppy=tmp_R=0.0;
-	tmpux=tmpuy=filt=0.0;
-	for(int_t y=-P1[i].ncell;y<=P1[i].ncell;y++){
-		for(int_t x=-P1[i].ncell;x<=P1[i].ncell;x++){
-			// int_t k=(icell+x)+k_NI*(jcell+y);
-			int_t k=idx_cell(icell+x,jcell+y,0);
-
-			if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))) continue;
-			if(g_str[k]!=cu_memset){
-				int_t fend=g_end[k];
-				for(int_t j=g_str[k];j<fend;j++){
-					Real xj,yj,tdist;
-					int itype;
-					int p_type_j, buffer_typej;
-
-					xj=P1[j].x;
-					yj=P1[j].y;
-					itype=P1[j].i_type;
-					buffer_typej=P1[j].buffer_type;
-
-					// if((itype!=2)|((buffer_typej!=Inlet)&(buffer_typej!=Outlet))){
-					if(itype!=4){
-					if(P1[j].p_type==1 && P1[j].buffer_type!=Outlet){
-
-					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj))-1e-20;
-					if(tdist<search_range){
-						Real mj,uxj,uyj,rhoj,tmprho;
-						Real hj;
-						Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
-						hj=P1[i].h;
-
-						p_type_j=P1[j].p_type;
-
-						mj=P1[j].m;
-						rhoj=P1[j].rho;
-						uxj=P1[j].ux;
-						uyj=P1[j].uy;
-
-						tmprho=mj/rhoj;
-						tmpux+=(uxj)*tmprho*twij;
-						tmpuy+=(uyj)*tmprho*twij;
-						filt+=tmprho*twij;
-						}
-					}
-				}
-			}
-				}
-		}
-	}
-
-	// preliminary velocity
-	P1[i].concentration = filt;
-	// P1[i].ux_i = tmpux/(filt+1e-10);
-	// P1[i].uy_i = tmpuy/(filt+1e-10);
-
-	// the force applied to solid for no-slip condition
-	P1[i].fbx = 1.0 * (P1[i].ux-tmpux/(filt+1e-10))/t_dt;
-	P1[i].fby = 1.0 * (P1[i].uy-tmpuy/(filt+1e-10))/t_dt;
-
-	//if(abs(P1[i].fbx)>0.1) printf("fbx=%f\n",P1[i].fbx);
-	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
-}
-
-////////////////////////////////////////////////////////////////////////
-__global__ void IBM_spreading_interpolation2D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
-{
-	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
-	if(i>=k_num_part2) return;
-	if(P1[i].p_type>=1000)	return;		// Immersed Boundary Method
-
-	int_t icell,jcell;
-	Real xi,yi,uxi,uyi;
-	Real rhoi;
-	Real search_range,tmp_h,tmp_A;
-	// Real tmpx,tmpy,tmppx,tmppy,tmp_R;
-	Real tmpux, tmpuy,filt;
-	int p_type_i;
-	Real fb_x, fb_y, fb_z;
-
-
-	p_type_i=P1[i].p_type;
-	xi=P1[i].x;
-	yi=P1[i].y;
-	uxi=P1[i].ux;
-	uyi=P1[i].uy;
-	rhoi=P1[i].rho;
-	tmp_h=IBM_length*P1[i].h;
-
-	tmp_A=calc_tmpA(tmp_h);
-	search_range=k_search_kappa*tmp_h;
-
-	// calculate I,J,K in cell
-	if((k_x_max==k_x_min)){icell=0;}
-	else{icell=min(floor((xi-k_x_min)/(k_x_max-k_x_min)*k_NI),k_NI-1);}
-	if((k_y_max==k_y_min)){jcell=0;}
-	else{jcell=min(floor((yi-k_y_min)/(k_y_max-k_y_min)*k_NJ),k_NJ-1);}
-	// out-of-range handling
-	if(icell<0) icell=0;	if(jcell<0) jcell=0;
-
-	// tmpx=tmpy=tmppx=tmppy=tmp_R=0.0;
-	tmpux=tmpuy=filt=0.0;
-	fb_x = fb_y = fb_z = 0.0;
-	for(int_t y=-P1[i].ncell;y<=P1[i].ncell;y++){
-		for(int_t x=-P1[i].ncell;x<=P1[i].ncell;x++){
-			// int_t k=(icell+x)+k_NI*(jcell+y);
-			int_t k=idx_cell(icell+x,jcell+y,0);
-
-			if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))) continue;
-			if(g_str[k]!=cu_memset){
-				int_t fend=g_end[k];
-				for(int_t j=g_str[k];j<fend;j++){
-					Real xj,yj,tdist;
-					int itype;
-					int p_type_j, buffer_typej;
-
-					xj=P1[j].x;
-					yj=P1[j].y;
-					itype=P1[j].i_type;
-					buffer_typej=P1[j].buffer_type;
-
-					// if((itype!=2)|((buffer_typej!=Inlet)&(buffer_typej!=Outlet))){
-					if(P1[j].p_type>=1000){
-
-					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj))-1e-20;
-					if(tdist<search_range){
-						Real mj,tdwx,tdwy,uxj,uyj,rhoj,phi_ij,tmprho,tmpr;
-						Real fb_xm, fb_ym, fb_zm;
-						Real tdwij=calc_kernel_dwij(tmp_A,tmp_h,tdist);
-						Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
-
-
-						p_type_j=P1[j].p_type;
-
-						mj=P1[j].m;
-						rhoj=P1[j].rho;
-						uxj=P1[j].ux;
-						uyj=P1[j].uy;
-
-						tmpr=0.0;
-
-						fb_xm = P1[j].fbx;
-						fb_ym = P1[j].fby;
-						fb_zm = P1[j].fbz;
-
-						tdwx=tdwij*(xi-xj)/tdist;
-						tdwy=tdwij*(yi-yj)/tdist;
-
-						if(k_kgc_solve>0){
-							Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
-							apply_gradient_correction_2D(P3[i].Cm,twij,tdwx,tdwy,&tdwx,&tdwy);
-						}
-
-						// Real hj=P1[j].h;
-						// apply_MLS_filter_2D(P3[i].A,twij,&twij,xi,xj,yi,yj,hj);
-
-						tmprho=mj/rhoj;
-						fb_x+=fb_xm*twij*tmprho;
-						fb_y+=fb_ym*twij*tmprho;
-						filt+=tmprho*twij;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// the force applied to fluid for no-slip condition
-
-	P1[i].fbx = fb_x/(filt+1e-10);
-	P1[i].fby = fb_y/(filt+1e-10);
-	P1[i].concentration = filt;
-
-}
-
-// ---- [file scope] 상수 테이블: 컴파일타임 초기화, L1-cached constant memory ----
-__constant__ double CASEH_Z[30] = {         // device에서 직접 접근 가능
-    0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
-    0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
-    0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
-    0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
-    0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
-    0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
-};
-__constant__ double CASEH_U[30] = {
-    2.745, 2.935, 3.175, 3.435, 3.627,
-    3.824, 4.021, 4.210, 4.362, 4.491,
-    4.502, 4.586, 4.606, 4.712, 4.854,
-    4.993, 5.132, 5.449, 5.782, 6.077,
-    6.338, 6.588, 6.693, 6.751, 6.751,
-    6.751, 6.751, 6.751, 6.751, 6.751
-};
-constexpr int CASEH_N = 30;
-
-// ---- [device] 선형 보간 + 끝단 1차 외삽, STL 미사용 이진탐색 ----
-__device__ __forceinline__
-double Device_Interpolate_ux_caseH(double z_inp, double scale)
-{
-    const double z = scale * z_inp;
-
-    // 아래/위 외삽 (분모 0 방지용 eps)
-    if (z <= CASEH_Z[0]) {
-        const double dz = CASEH_Z[1] - CASEH_Z[0];
-        const double du = CASEH_U[1] - CASEH_U[0];
-        return CASEH_U[0] + (z - CASEH_Z[0]) * (du / (dz + 1e-300));   // device-safe
-    }
-    if (z >= CASEH_Z[CASEH_N - 1]) {
-        const double dz = CASEH_Z[CASEH_N - 1] - CASEH_Z[CASEH_N - 2];
-        const double du = CASEH_U[CASEH_N - 1] - CASEH_U[CASEH_N - 2];
-        return CASEH_U[CASEH_N - 2] + (z - CASEH_Z[CASEH_N - 2]) * (du / (dz + 1e-300)); // device-safe
-    }
-
-    // 이진탐색: CASEH_Z[lo] <= z < CASEH_Z[hi]
-    int lo = 0, hi = CASEH_N - 1;                                   // // Changed: std::lower_bound 제거
-    while (hi - lo > 1) {                                           // // Changed: device-safe binary search
-        const int mid = (lo + hi) >> 1;
-        if (z < CASEH_Z[mid]) hi = mid; else lo = mid;
-    }
-
-    // 선형 보간
-    const double z0 = CASEH_Z[lo], z1 = CASEH_Z[hi];
-    const double u0 = CASEH_U[lo], u1 = CASEH_U[hi];
-    const double t  = (z - z0) / (z1 - z0 + 1e-300);                 // // Changed: 0 division 보호
-    // fma(t, (u1-u0), u0) 사용 시 약간의 수치 이득 (컴파일러가 지원하면 자동 FMA)
-    return u0 + t * (u1 - u0);
-}
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
@@ -400,7 +189,6 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 						//if(abs(xj-0.76)<1e-3 && abs(zj-0.156)<1e-3) continue;    // for AIJ Case H
 						// if(abs(xj-95)<1e-3 && abs(zj-19.5)<1e-3) continue;    // for AIJ Case HS
 
-						// if((itype!=2)|((buffer_typej!=Inlet)&(buffer_typej!=Outlet))){
 						if(itype!=4){
 							if(P1[j].p_type==1){
 
@@ -591,8 +379,6 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 		}
 	}
 
-	// if (xi>215 && xi<225 && yi<35 && yi>25 && zi> 25 && zi<30)printf("i:(%f.1,%f.1,%f.1) j:(%f.1,%f.1,%f.1) search range=%f twij=%f fb_fluid=%f fb_solid=%f\n",xi,yi,zi,xj,yj,zj,search_range,tmp_twx,fb_x,fb_so);
-
 	if(filt < 1e-12){
         P1[i].fbx = 0.0f;
         P1[i].fby = 0.0f;
@@ -600,7 +386,6 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
         P1[i].concentration = 0.0f;
         return;
     }
-
 	// the force applied to fluid for no-slip condition
 	P1[i].fbx = fb_x/(filt+1e-10);
 	P1[i].fby = fb_y/(filt+1e-10);

@@ -213,15 +213,17 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
     	Real scale_factor=0.16/0.16;       // 0.16/building_height
     	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
     	HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
-    // if((HP1[i].x-765.0)*(HP1[i].x-765.0)+(HP1[i].y-0.0)*(HP1[i].y-0.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
-    // else if((HP1[i].x-425.0)*(HP1[i].x-425.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
-    // else if((HP1[i].x-435.0)*(HP1[i].x-435.0)+(HP1[i].y-155.0)*(HP1[i].y-155.0)+(HP1[i].z-12.5)*(HP1[i].z-12.5)<1e-3) {HP1[i].source=1;}
-    // else if((HP1[i].x-500.0)*(HP1[i].x-500.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-57.5)*(HP1[i].z-57.5)<1e-3) {HP1[i].source=1;}
-    //HP1[i].temp=310.0-10.0*(log(HP1[i].z+1.0)/log(301.0));
-		//HP1[i].pres=HP1[i].rho*Gravitational_CONST*(L_ceiling+20.0-HP1[i].z);
-    //HP1[i].pres0=HP1[i].pres;
-		// //HP1[i].blood_index=0;
-		// //HP1[i].M_num=0;
+    
+		// if((HP1[i].x-765.0)*(HP1[i].x-765.0)+(HP1[i].y-0.0)*(HP1[i].y-0.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
+    	// else if((HP1[i].x-425.0)*(HP1[i].x-425.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
+    	// else if((HP1[i].x-435.0)*(HP1[i].x-435.0)+(HP1[i].y-155.0)*(HP1[i].y-155.0)+(HP1[i].z-12.5)*(HP1[i].z-12.5)<1e-3) {HP1[i].source=1;}
+    	// else if((HP1[i].x-500.0)*(HP1[i].x-500.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-57.5)*(HP1[i].z-57.5)<1e-3) {HP1[i].source=1;}
+    	
+		// HP1[i].temp=310.0-10.0*(log(HP1[i].z+1.0)/log(301.0));
+		// HP1[i].pres=HP1[i].rho*Gravitational_CONST*(L_ceiling+20.0-HP1[i].z);
+    	// HP1[i].pres0=HP1[i].pres;
+		// HP1[i].blood_index=0;
+		// HP1[i].M_num=0;
 		// if(HP1[i].p_type!=1){
 		// 	if(HP1[i].z<0) HP1[i].p_type=0;
 		// 	else if(HP1[i].y<0||HP1[i].y>50||HP1[i].z>30) {
@@ -229,12 +231,13 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		// 		HP1[i].ux=1.0;
 		// 	}
 		// }
-		//HP1[i].ux=0.0;
-		//if(HP1[i].p_type==1000) HP1[i].i_type=3;
-		// if(HP1[i].p_type==3) {    // for SNU_IBM (KDH)
-		// 	if(HP1[i].y>261 || HP1[i].y<16) HP1[i].p_type=-1;
-		// 	else if(HP1[i].z<4) HP1[i].i_type=3;
-		// 	else HP1[i].p_type=1;
+		// HP1[i].ux=0.0;
+		
+		// if(HP1[i].p_type==1000) HP1[i].i_type=3;
+		//  if(HP1[i].p_type==3) {    // for SNU_IBM (KDH)
+		// 	 if(HP1[i].y>261 || HP1[i].y<16) HP1[i].p_type=-1;
+		// 	 else if(HP1[i].z<4) HP1[i].i_type=3;
+		// 	 else HP1[i].p_type=1;
 		// }
 
 		if(HP1[i].p_type==3) {
@@ -309,61 +312,50 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			if (HP1[i].p_type==1 || HP1[i].p_type==-1){
 				//if (HP1[i].buffer_type==1){
 
-					Real a=0.27;
-					Real z_ref=0.0;
-					Real u_ref=5.0;
-					Real z=0.0;
+				Real a=0.27;
+				Real z_ref=0.0;
+				Real u_ref=5.0;
+				Real z=0.0;
 
-					switch(terrain_type){
-						case 0:
+				switch(terrain_type){
+					case 0:
 						a=0.14;
 						z_ref=2.0;
 						printf("terrain type: flat\n");
 						break;
-						case 1:
+					case 1:
 						a=0.19;
 						z_ref=350.0;
 						printf("terrain type: Grass\n");
 						break;
-						case 2:
+					case 2:
 						a=0.19;
 						z_ref=350.0;
 						printf("terrain type: Forest\n");
 						break;
-						case 3:
+					case 3:
 						a=0.19;
 						z_ref=350.0;
 						//printf("terrain type: City\n");
 						break;
-						case 4:
+					case 4:
 						a=0.19;
 						z_ref=350.0;
 						printf("terrain type: Ocean\n");
 						break;
-						default:
+					default:
 						a=0.19;
 						z_ref=350.0;
 						printf("terrain type: flat\n");
 						break;
-					}
-					if (HP1[i].z>=0) z=HP1[i].z;
-					else z=0.0;
-					//HP1[i].ux=u_ref*pow(z/z_ref,a);
-					//HP1[i].ux=u_ref;
-					//HP1[i].ux=(us_ini/k_vonKarman)*log(HP1[i].z/MOST_z0);
+				}
+				if (HP1[i].z>=0) z=HP1[i].z;
+				else z=0.0;
+				//HP1[i].ux=u_ref*pow(z/z_ref,a);
+				//HP1[i].ux=u_ref;
+				//HP1[i].ux=(us_ini/k_vonKarman)*log(HP1[i].z/MOST_z0);
 
-					if (HP1[i].z<0) HP1[i].ux=0.0;
-
-					// // C++/CUDA 식 예시
-					// float rand1 = box_muller(i, 1234, 5678);
-					// float rand2 = box_muller(i, 2345, 6789);
-					// float rand3 = box_muller(i, 3456, 7890);
-					//
-					// float delta = 0.02;  // perturbation scale
-					//
-					// HP1[i].ux += delta * rand1;
-					// HP1[i].uy += delta * rand2;
-					// HP1[i].uz += delta * rand3;
+				if (HP1[i].z<0) HP1[i].ux=0.0;
 			}
 			else HP1[i].ux=0.0;
 		}
@@ -954,17 +946,3 @@ __global__ void KERNEL_set_ncell(part1*P1)
 	//if(P1[i].y>2.4) P1[i].ncell = 8;
 }
 ////////////////////////////////////////////////////////////////////////
-
-// __global__ void KERNEL_check(int_t*g_idx,int_t*p_idx,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part1*SP1,part2*SP2)
-// {
-// 	extern __shared__ int sharedHash[];
-//
-// 	int idx=threadIdx.x+blockIdx.x*blockDim.x;
-// 	if(idx>=k_num_part2) return;
-//   Real xi, yi, zi;
-// 	xi=P1[idx].x;
-// 	yi=P1[idx].y;
-// 	zi=P1[idx].z;
-// 	if (xi>220 && xi<230 && yi<30 && yi>20 && zi> 25 && zi<30) printf("ptype:%d p_idx:%d g_idx:%d\n",P1[idx].p_type,p_idx[idx],g_idx[idx]);
-// 	if (xi>215 && xi<225 && yi<35 && yi>25 && zi> 25 && zi<30) printf("ptype:%d p_idx:%d g_idx:%d\n",P1[idx].p_type,p_idx[idx],g_idx[idx]);
-// }

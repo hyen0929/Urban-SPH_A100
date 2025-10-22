@@ -102,18 +102,6 @@ __device__ Real calc_kernel_dwij(Real tA,Real tH,Real rr){
 	return dwij;
 }
 
-__host__ __device__ void apply_gradient_correction_2D(Real Cm[][Correction_Matrix_Size],Real wij,Real dwx,Real dwy,Real* dwcx,Real* dwcy)
-{
-	if(k_kgc_solve==KGC){
-		*dwcx=Cm[0][0]*dwx+Cm[0][1]*dwy;
-		*dwcy=Cm[1][0]*dwx+Cm[1][1]*dwy;
-	}
-	else if(k_kgc_solve==DFPM){
-		// *dwcx=Cm[0][0]*dwx+Cm[0][1]*dwy;
-		// *dwcy=Cm[1][0]*dwx+Cm[1][1]*dwy;
-	}
-}
-
 __host__ __device__ void apply_gradient_correction_3D(Real Cm[][Correction_Matrix_Size],Real wij,Real dwx,Real dwy,Real dwz,Real* dwcx,Real* dwcy,Real* dwcz)
 {
 	if(k_kgc_solve==KGC){
@@ -125,92 +113,6 @@ __host__ __device__ void apply_gradient_correction_3D(Real Cm[][Correction_Matri
 	// 	// *dwcx=Cm[0][0]*dwx+Cm[0][1]*dwy;
 	// 	// *dwcy=Cm[1][0]*dwx+Cm[1][1]*dwy;
 	// }
-}
-
-__global__ void KERNEL_clc_gradient_correction_2D(int_t*g_str,int_t*g_end,part1*P1,part3*P3)
-{
-    uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
-    if (i>=k_num_part2) return;
-
-    int_t icell,jcell;
-    Real xi,yi;
-    Real search_range,hi,tmp_A;
-    int_t ptype_i=P1[i].p_type;
-
-    Real tmpxx,tmpyy;
-    Real tmpxy;
-
-    hi=P1[i].h;
-    tmp_A=calc_tmpA(hi);
-    search_range=k_search_kappa*hi; // search range
-
-    xi=P1[i].x;
-    yi=P1[i].y;
-
-    // calculate I,J in cell
-    if ((k_x_max==k_x_min)){icell=0;}
-    else {icell=min(floor((xi-k_x_min)/(k_x_max-k_x_min)*k_NI),k_NI-1);}
-    if ((k_y_max==k_y_min)){jcell=0;}
-    else {jcell=min(floor((yi-k_y_min)/(k_y_max-k_y_min)*k_NJ),k_NJ-1);}
-    // out-of-range handling
-    if (icell<0) icell=0; if (jcell<0) jcell=0;
-
-    tmpxx=tmpyy=0.0;
-    tmpxy=0.0;
-
-    for (int_t y=-P1[i].ncell; y <= P1[i].ncell; y++){
-        for (int_t x=-P1[i].ncell; x <= P1[i].ncell; x++){
-            int_t k=(icell+x)+k_NI*(jcell+y);
-            // if (k<0 || k >= k_num_cells-1) continue;
-						if(((icell+x)<0) || ((icell+x)>=k_NI) || ((jcell+y)<0) || ((jcell+y)>=k_NJ)) continue;
-            if (g_str[k] != cu_memset){
-                int_t fend=g_end[k];
-                for (int_t j=g_str[k]; j<fend; j++){
-                    Real xj,yj,tdist;
-                    xj=P1[j].x;
-                    yj=P1[j].y;
-                    int_t ptype_j=P1[j].p_type;
-
-                    tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj));
-                    if (tdist>0 && tdist<search_range){
-                        Real tdwij,mj,rhoj,txx,txy,tyy,mtd,rtd;
-                        tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
-                        mj=P1[j].m;
-                        rhoj=P1[j].rho;
-
-                        mtd=mj*tdwij;
-                        rtd=1.0/(rhoj*tdist);
-
-                        txx=-mtd*(xi-xj)*(xi-xj);
-                        txx*=rtd;
-                        txy=-mtd*(yi-yj)*(xi-xj);
-                        txy*=rtd;
-                        tyy=-mtd*(yi-yj)*(yi-yj);
-                        tyy*=rtd;
-
-                        tmpxx+=txx*(ptype_j==1);
-                        tmpxy+=txy*(ptype_j==1);
-                        tmpyy+=tyy*(ptype_j==1);
-                    }
-                }
-            }
-        }
-    }
-
-    // save values to particle array
-    Real tmpcmd;
-    tmpcmd=tmpxx*tmpyy-tmpxy*tmpxy;
-
-    if ((abs(tmpcmd)>DBL_EPSILON) && (ptype_i==1)){
-        Real rtcmd=1.0/tmpcmd;
-        P3[i].inv_cm_xx=tmpyy*rtcmd;
-        P3[i].inv_cm_xy=-tmpxy*rtcmd;
-        P3[i].inv_cm_yy=tmpxx*rtcmd;
-    } else {
-        P3[i].inv_cm_xx=1.0;
-        P3[i].inv_cm_xy=0.0;
-        P3[i].inv_cm_yy=1.0;
-    }
 }
 
 __global__ void KERNEL_clc_gradient_correction_3D(int_t*g_str,int_t*g_end,part1*P1,part3*P3)

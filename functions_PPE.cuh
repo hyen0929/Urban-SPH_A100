@@ -99,8 +99,8 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 
 								if(tdist<search_range){
 									//if(i==135235) P1[j].PPE2=1.0;
-									Real twij=calc_kernel_wij_pressure(tmp_A,hi,tdist);
-									Real tdwij=calc_kernel_dwij_pressure(tmp_A,hi,tdist);    // 원본
+									Real twij=calc_kernel_wij(tmp_A,hi,tdist);
+									Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);    // 원본
 									Real tdwx=tdwij*(xi-xj)/tdist;
 									Real tdwy=tdwij*(yi-yj)/tdist;
 									Real tdwz=tdwij*(zi-zj)/tdist;
