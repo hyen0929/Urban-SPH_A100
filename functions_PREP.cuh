@@ -322,8 +322,7 @@ void gradient_correction(int_t*g_str,int_t*g_end,part1*P1,part3*P3)
 	b.x=(num_part2-1)/t.x+1;
 	switch (kgc_solve){
 		case KGC:
-		if(dim==2) KERNEL_clc_correction_KGC_2D<<<b,t>>>(g_str,g_end,P1,P3);
-		if(dim==3) KERNEL_clc_correction_KGC_3D<<<b,t>>>(g_str,g_end,P1,P3);
+		KERNEL_clc_correction_KGC_3D<<<b,t>>>(g_str,g_end,P1,P3);
 		cudaDeviceSynchronize();
 		break;
 		case FPM:
@@ -342,8 +341,7 @@ void gradient_correction(int_t*g_str,int_t*g_end,part1*P1,part3*P3)
 		// cudaDeviceSynchronize();
 		break;
 		default:
-		if(dim==2) KERNEL_clc_correction_KGC_2D<<<b,t>>>(g_str,g_end,P1,P3);
-		if(dim==3) KERNEL_clc_correction_KGC_3D<<<b,t>>>(g_str,g_end,P1,P3);
+		KERNEL_clc_correction_KGC_3D<<<b,t>>>(g_str,g_end,P1,P3);
 		cudaDeviceSynchronize();
 		break;
 	}

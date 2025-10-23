@@ -21,6 +21,8 @@
 #include <pthread.h>
 #include <cub/cub.cuh>
 #include <float.h>
+#include <cstdlib>
+
 
 #include "cuda.h"
 #include "cuda_runtime_api.h"
@@ -32,7 +34,7 @@
 #include "Variable_Type.cuh"
 #include "Parameters.cuh"
 #include "class_Cuda_Particle_Array.cuh"
-
+#include <curand_kernel.h>
 
 //---------------------------------------------------------------
 // 전역변수 선언
@@ -103,13 +105,13 @@ char plot_data[20][20]; 	// plot 할 변수
 #include "functions_PROP.cuh"
 #include "functions_PREP.cuh"
 #include "functions_IBM.cuh"
-#include "functions_INTERACTION.cuh"
 #include "functions_ENERGY.cuh"
 #include "functions_TIME.cuh"
 #include "functions_PPE.cuh"
 #include "functions_OUTPUT.cuh"
 #include "functions_BC.cuh"
 #include "functions_MOST.cuh"
+#include "functions_LDM.cuh"
 // #include "functions_APR.cuh"
 //#include "functions_APR_etc.cuh"
 #include "functions_TIME_ISPH.cuh"
