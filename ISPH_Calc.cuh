@@ -214,23 +214,25 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 // LDM coupling
 //-------------------------------------------------------------------------------------------------
 
-	int numx = round((xmax-xmin)/xspan);
-	int numy = round((ymax-ymin)/yspan);
-	int numz = round((zmax-zmin)/zspan);
+	// int numx = round((xmax-xmin)/xspan);
+	// int numy = round((ymax-ymin)/yspan);
+	// int numz = round((zmax-zmin)/zspan);
 
-	b.x=(num_part2-1)/t.x+1;
-	particle_releasing_Dispersion<<<b,t>>>(dt,time,time_end,dev_P4);
-
-	if(time_type==Pre_Cor){
+	
+	if((count!=0)&&(count%freq_LDM==0)){
 		b.x=(num_part2-1)/t.x+1;
-		KERNEL_clc_predictor_Dispersion<<<b,t>>>(dt,time,dev_P4,dev_P5,dev_P6);
+		particle_releasing_Dispersion<<<b,t>>>(dt,time,time_end,dev_P4);
+
+		if(time_type==Pre_Cor){
+			b.x=(num_part2-1)/t.x+1;
+			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_P4,dev_P5,dev_P6);
+			cudaDeviceSynchronize();
+		}
+		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
+		b.x=(num_part2-1)/t.x+1;
+		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,dev_P4,dev_P5,dev_P1);
 		cudaDeviceSynchronize();
 	}
-
-	// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
-	b.x=(num_part2-1)/t.x+1;
-	KERNEL_time_update_CFD_3D<<<b,t>>>(dt,time,time_end,dev_P4,dev_P5,dev_cfd,xmin,xmax,xspan,ymin,ymax,yspan,zmin,zmax,zspan);
-	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // 출력
