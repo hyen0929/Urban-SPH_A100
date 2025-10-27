@@ -114,7 +114,7 @@ typedef struct p2p_particles_array_3{
 	Real ftotal;
 }p2p_part3;
 
-typedef struct particles_array_4{
+typedef struct LDM_particles_array_1{
 	int_t i_type;													// Inner or Outer
 	uint_t buffer_type;											// buffer_type (0: active , 1: inlet, 2: outlet)
 	uint_t p_type;													// particle type: FLUID or BOUNDARY
@@ -123,7 +123,9 @@ typedef struct particles_array_4{
 	Real x,y,z;															// (Predicted) positions [m] ( Predictor_Corrector : Predicted position / Euler : Real Position )
 	Real ux,uy,uz;													// (Predicted) velocity [m/s] ( Predictor_Corrector : Predicted velocity / Euler : Real Velocity )
 	Real m;																	// mass [kg]
+	Real m_ref;
 	Real h;																	// kernel distance
+	Real h_ref;
 	Real temp;															// temperature [K]
 	Real pres;															// pressure [Pa]
 	//Real pres_ave;													// averaged pressure
@@ -154,9 +156,9 @@ typedef struct particles_array_4{
 	// Real dx_pst, dy_pst, dz_pst; 						// particle shifting displacement
 	uint_t ncell;
 	// Real nx_s,ny_s,nz_s;									// surface normal vector --> not used
-}part4;
+}L_part1;
 ////////////////////////////////////////////////////////////////////////
-typedef struct particles_array_5{
+typedef struct LDM_particles_array_2{
 	Real rho_ref;
 
 	//// turbulence (by esk)
@@ -172,9 +174,9 @@ typedef struct particles_array_5{
 	Real enthalpy0;													// enthalpy [J/kg]
 
 	Real uxr0,uyr0,uzr0;
-}part5;
+}L_part2;
 ////////////////////////////////////////////////////////////////////////
-typedef struct particles_array_6{
+typedef struct LDM_particles_array_3{
 	Real drho;															// Time Derivative of density [kg/m3 s]
 	Real dconcn;														// concentration time derivative
 	Real denthalpy;
@@ -217,15 +219,15 @@ typedef struct particles_array_6{
 	//*/
 
 
-}part6;
+}L_part3;
 ///////////////////////////////////////////////////////////////////////////
-typedef struct p2p_particles_array_4{
+typedef struct LDM_p2p_particles_array_1{
 	Real drho;															// Time Derivative of density [kg/m3 s]
 	Real dconcn;														// concentration time derivative
 	Real denthalpy;
 	Real ftotalx,ftotaly,ftotalz;						// total force [m/s2]
 	Real ftotal;
-}p2p_part4;
+}L_p2p_part1;
 
 typedef struct cfd_mesh{
 	Real conc;

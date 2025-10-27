@@ -23,7 +23,6 @@
 #include <float.h>
 #include <cstdlib>
 
-
 #include "cuda.h"
 #include "cuda_runtime_api.h"
 #include "cuda_runtime.h"
@@ -67,6 +66,14 @@ part1*DHP1[Max_GPU];		// gpu당 할당할 host 입자
 part1*send_P1[Max_GPU],*send_rSP1[Max_GPU],*send_lSP1[Max_GPU],*recv_P1[Max_GPU];
 p2p_part3*send_P3[Max_GPU],*send_rSP3[Max_GPU],*send_lSP3[Max_GPU],*recv_P3[Max_GPU];
 
+// for main domain
+L_part1*HLP1;							// host 전체입자
+L_part1*DHLP1[Max_GPU];		// gpu당 할당할 host 입자
+
+// for data exchange
+L_part1*send_LDM_P1[Max_GPU],*send_LDM_rSP1[Max_GPU],*send_LDM_lSP1[Max_GPU],*recv_LDM_P1[Max_GPU];
+p2p_part3*send_LDM_P3[Max_GPU],*send_LDM_rSP3[Max_GPU],*send_LDM_lSP3[Max_GPU],*recv_LDM_P3[Max_GPU];
+
 // table - host
 Real host_Tab_T[table_size];
 Real host_Tab_h[table_size];
@@ -95,9 +102,7 @@ __device__ int num_buffer[1];	// buffer 입자의 총 수를 저장하는 전역
 int num_plot_data;				// plot data 개수
 char plot_data[20][20]; 	// plot 할 변수
 
-
 //---------------------------------------------------------------
-
 
 #include "function_init.cuh"
 #include "functions_NNPS.cuh"

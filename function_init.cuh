@@ -1,23 +1,23 @@
 // int_t type variable define
 #define		solver_type							vii[0]		// solver type: WCSPH/ISPH
-#define		dim											vii[1]		// dimension
+#define		dim									vii[1]		// dimension
 #define		prop_table							vii[2]		// property_table(Yes/NO)
 #define		kernel_type							vii[3]		// kernel type
-#define		time_type								vii[4]		// time stepping type
+#define		time_type							vii[4]		// time stepping type
 #define		open_boundary						vii[5]		// open boundary (YES / NO)
-#define		flag_timestep_update		vii[6]		// flag for varying timestep update
+#define		flag_timestep_update				vii[6]		// flag for varying timestep update
 #define		nb_cell_type						vii[7]		// neighbor cell type
-#define		freq_filt								vii[8]		// filtering frequency
+#define		freq_filt							vii[8]		// filtering frequency
 #define		freq_mass_sum						vii[9]		// mass summation frequency
-#define		freq_temp								vii[10]		// temperature filtering frequency
+#define		freq_temp							vii[10]		// temperature filtering frequency
 #define		freq_output							vii[11]		// output frequency
-#define		fp_solve								vii[12]		// solve pressure force ?
-#define		fv_solve								vii[13]		// sovle viscous force ?
-#define		fg_solve								vii[14]		// solve gravity force ?
-#define		con_solve								vii[15]		// solve conduction?
-#define		boussinesq_solve				vii[16]		// solve boussinesq approximation based natural convection?
-#define		kgc_solve								vii[17]		// solve kernel gradient correction ?
-#define		turbulence_model				vii[18]		// turbulence model	(by esk)
+#define		fp_solve							vii[12]		// solve pressure force ?
+#define		fv_solve							vii[13]		// sovle viscous force ?
+#define		fg_solve							vii[14]		// solve gravity force ?
+#define		con_solve							vii[15]		// solve conduction?
+#define		boussinesq_solve					vii[16]		// solve boussinesq approximation based natural convection?
+#define		kgc_solve							vii[17]		// solve kernel gradient correction ?
+#define		turbulence_model					vii[18]		// turbulence model	(by esk)
 #define		concn_solve							vii[19]		// concentration diffusion model(PSH)
 //
 //psh:: ISPH input
@@ -25,83 +25,84 @@
 #define		maxIteration						vii[21]		// maximum number of PCISPH iteration
 //
 //solution variables
-#define		nb_cell_number					vii[22]
-#define		num_part								vii[23]
-#define		NI											vii[24]
-#define		NJ											vii[25]
-#define		NK											vii[26]
-#define		count										vii[27]
-#define		num_cells								vii[28]
-#define		ngpu										vii[29]
-#define		calc_area								vii[30]
-#define		num_p2p									vii[31]
-#define		num_part2								vii[32]
+#define		nb_cell_number						vii[22]
+#define		num_part							vii[23]
+#define		NI									vii[24]
+#define		NJ									vii[25]
+#define		NK									vii[26]
+#define		count								vii[27]
+#define		num_cells							vii[28]
+#define		ngpu								vii[29]
+#define		calc_area							vii[30]
+#define		num_p2p								vii[31]
+#define		num_part2							vii[32]
 #define		switch_ptype						vii[33]
 #define   noslip_bc								vii[34]
-#define   apr_solv                vii[35]
-#define 	h_change								vii[36]
+#define   apr_solv                				vii[35]
+#define 	h_change							vii[36]
 #define   freq_apr								vii[37]
 #define		freq_h_reset						vii[38]
 #define		num_blocks							vii[39]
-#define		freq_bapr								vii[40]
-#define		NBI											vii[41]
-#define		NBJ											vii[42]
-#define		NBK											vii[43]
-#define   structure_solv          vii[44]
-#define   atmos_stab		          vii[45]  // AeroSPHere (KDH)
-#define   terrain_type	          vii[46]  // AeroSPHere (KDH)
-#define	  freq_LDM   					vii[47]  // LDM frequency (KDH)
+#define		freq_bapr							vii[40]
+#define		NBI									vii[41]
+#define		NBJ									vii[42]
+#define		NBK									vii[43]
+#define   structure_solv          				vii[44]
+#define   atmos_stab		          			vii[45]  	// AeroSPHere (KDH)
+#define   terrain_type	          				vii[46]  	// AeroSPHere (KDH)
+#define	  num_part_LDM   						vii[47]  	// LDM frequency (KDH)
+#define	  freq_LDM   							vii[48]  	// LDM frequency (KDH)
 
 // Real type variable define
-#define		kappa										vif[0]		// k in k*h
-#define		p_ref										vif[1]		// reference pressure(for EOS)
-#define		dt											vif[2]		// time-step(s)
-#define		time										vif[3]		// time(s)
-#define		time_end								vif[4]
+#define		kappa								vif[0]		// k in k*h
+#define		p_ref								vif[1]		// reference pressure(for EOS)
+#define		dt									vif[2]		// time-step(s)
+#define		time								vif[3]		// time(s)
+#define		time_end							vif[4]
 // margin for simulation range
-#define		u_limit									vif[5]
+#define		u_limit								vif[5]
 
 //psh:: ISPH input
-#define		drho_th									vif[6]		// density convergence criterion
-#define		dp_th										vif[7]		// pressure convergence criterion
+#define		drho_th								vif[6]		// density convergence criterion
+#define		dp_th								vif[7]		// pressure convergence criterion
 #define		p_relaxation						vif[8]		// relaxation factor for PCISPH pressure
 //
 //solution variables
-#define		x_min										vif[9]
-#define		x_max										vif[10]
-#define		y_min										vif[11]
-#define		y_max										vif[12]
-#define		z_min										vif[13]
-#define		z_max										vif[14]
-#define		nd_ref									vif[15]
+#define		x_min								vif[9]
+#define		x_max								vif[10]
+#define		y_min								vif[11]
+#define		y_max								vif[12]
+#define		z_min								vif[13]
+#define		z_max								vif[14]
+#define		nd_ref								vif[15]
 //
-#define		search_incr_factor			vif[16]
+#define		search_incr_factor					vif[16]
 #define		search_kappa						vif[17]
-#define		dcell										vif[18]
+#define		dcell								vif[18]
 #define		buffersize							vif[19]
 #define		dt_structure						vif[20]
 ////////////////////////////////////////////////////////////////////////
 // int_t type variable define
-#define		k_solver_type							k_vii[0]		// solver type: WCSPH/ISPH
-#define		k_dim											k_vii[1]		// dimension
-#define		k_prop_table							k_vii[2]		// property table (YES/NO)
-#define		k_kernel_type							k_vii[3]		// kernel type
-#define		k_time_type								k_vii[4]		// time stepping type
+#define		k_solver_type						k_vii[0]		// solver type: WCSPH/ISPH
+#define		k_dim								k_vii[1]		// dimension
+#define		k_prop_table						k_vii[2]		// property table (YES/NO)
+#define		k_kernel_type						k_vii[3]		// kernel type
+#define		k_time_type							k_vii[4]		// time stepping type
 #define		k_open_boundary						k_vii[5]		// open boundary (YES / NO)
-#define		k_flag_timestep_update		k_vii[6]		// flag for varying timestep update
+#define		k_flag_timestep_update				k_vii[6]		// flag for varying timestep update
 #define		k_nb_cell_type						k_vii[7]		// neighbor cell type
-#define		k_freq_filt								k_vii[8]		// filtering frequency
+#define		k_freq_filt							k_vii[8]		// filtering frequency
 #define		k_freq_mass_sum						k_vii[9]		// mass summation frequency
-#define		k_freq_temp								k_vii[10]		// temperature filtering frequency
-#define		k_freq_output							k_vii[11]		// output frequency
-#define		k_fp_solve								k_vii[12]		// solve pressure force ?
-#define		k_fv_solve								k_vii[13]		// sovle viscous force ?
-#define		k_fg_solve								k_vii[14]		// solve gravity force ?
-#define		k_con_solve								k_vii[15]		// solve conduction?
-#define		k_boussinesq_solve				k_vii[16]		// solve boussinesq approximation based natural convection?
-#define		k_kgc_solve								k_vii[17]		// solve kernel gradient correction ?
-#define		k_turbulence_model				k_vii[18]		// turbulence model	(by esk)
-#define		k_concn_solve							k_vii[19]		// concentration diffusion model(PSH)
+#define		k_freq_temp							k_vii[10]		// temperature filtering frequency
+#define		k_freq_output						k_vii[11]		// output frequency
+#define		k_fp_solve							k_vii[12]		// solve pressure force ?
+#define		k_fv_solve							k_vii[13]		// sovle viscous force ?
+#define		k_fg_solve							k_vii[14]		// solve gravity force ?
+#define		k_con_solve							k_vii[15]		// solve conduction?
+#define		k_boussinesq_solve					k_vii[16]		// solve boussinesq approximation based natural convection?
+#define		k_kgc_solve							k_vii[17]		// solve kernel gradient correction ?
+#define		k_turbulence_model					k_vii[18]		// turbulence model	(by esk)
+#define		k_concn_solve						k_vii[19]		// concentration diffusion model(PSH)
 //
 //psh:: ISPH input
 #define		k_minIteration						k_vii[20]		// minimum number of PCISPH iteration
@@ -109,59 +110,60 @@
 //
 //solution variables
 #define		k_nb_cell_number					k_vii[22]
-#define		k_num_part								k_vii[23]
-#define		k_NI											k_vii[24]
-#define		k_NJ											k_vii[25]
-#define		k_NK											k_vii[26]
-#define		k_count										k_vii[27]
-#define		k_num_cells								k_vii[28]
-#define		k_ngpu										k_vii[29]
-#define		k_calc_area								k_vii[30]
-#define		k_num_p2p									k_vii[31]
-#define		k_num_part2								k_vii[32]
+#define		k_num_part							k_vii[23]
+#define		k_NI								k_vii[24]
+#define		k_NJ								k_vii[25]
+#define		k_NK								k_vii[26]
+#define		k_count								k_vii[27]
+#define		k_num_cells							k_vii[28]
+#define		k_ngpu								k_vii[29]
+#define		k_calc_area							k_vii[30]
+#define		k_num_p2p							k_vii[31]
+#define		k_num_part2							k_vii[32]
 #define		k_switch_ptype						k_vii[33]
-#define   k_noslip_bc								k_vii[34]
-#define   k_apr_solv                k_vii[35]
-#define  	k_h_change								k_vii[36]
-#define   k_freq_apr								k_vii[37]
+#define   k_noslip_bc							k_vii[34]
+#define   k_apr_solv                			k_vii[35]
+#define  	k_h_change							k_vii[36]
+#define   k_freq_apr							k_vii[37]
 #define		k_freq_h_reset						k_vii[38]
-#define		k_num_blocks							k_vii[39]
-#define		freq_bapr									k_vii[40]
-#define		k_NBI											k_vii[41]
-#define		k_NBJ											k_vii[42]
-#define		k_NBK											k_vii[43]
-#define   k_structure_solv          k_vii[44]
-#define   atmos_stab		          	k_vii[45]	 // AeroSPHere (KDH)
-#define   terrain_type	          	k_vii[46]  // AeroSPHere (KDH)
-#define		k_freq_LDM   					k_vii[47]  // LDM frequency (KDH)
+#define		k_num_blocks						k_vii[39]
+#define		freq_bapr							k_vii[40]
+#define		k_NBI								k_vii[41]
+#define		k_NBJ								k_vii[42]
+#define		k_NBK								k_vii[43]
+#define   	k_structure_solv          			k_vii[44]
+#define   	k_atmos_stab		        		k_vii[45]	 	// AeroSPHere (KDH)
+#define   	k_terrain_type	          			k_vii[46]  		// AeroSPHere (KDH)
+#define 	k_num_part_LDM						k_vii[47]
+#define		k_freq_LDM   						k_vii[48]  		// LDM frequency (KDH)
 //
 // Real type variable define
-#define		k_kappa										k_vif[0]		// k in k*h
-#define		k_p_ref										k_vif[1]		// reference pressure(for EOS)
-#define		k_dt											k_vif[2]		// time-step(s)
-#define		k_time										k_vif[3]		// time(s)
-#define		k_time_end								k_vif[4]
+#define		k_kappa								k_vif[0]		// k in k*h
+#define		k_p_ref								k_vif[1]		// reference pressure(for EOS)
+#define		k_dt								k_vif[2]		// time-step(s)
+#define		k_time								k_vif[3]		// time(s)
+#define		k_time_end							k_vif[4]
 // margin for simulation range
-#define		k_u_limit									k_vif[5]
+#define		k_u_limit							k_vif[5]
 
 //psh:: ISPH input
-#define		k_drho_th									k_vif[6]		// density convergence criterion
-#define		k_dp_th										k_vif[7]		// pressure convergence criterion
+#define		k_drho_th							k_vif[6]		// density convergence criterion
+#define		k_dp_th								k_vif[7]		// pressure convergence criterion
 #define		k_p_relaxation						k_vif[8]		// relaxation factor for PCISPH pressure
 //
 //solution variables
-#define		k_x_min										k_vif[9]
-#define		k_x_max										k_vif[10]
-#define		k_y_min										k_vif[11]
-#define		k_y_max										k_vif[12]
-#define		k_z_min										k_vif[13]
-#define		k_z_max										k_vif[14]
-#define		k_nd_ref									k_vif[15]
+#define		k_x_min								k_vif[9]
+#define		k_x_max								k_vif[10]
+#define		k_y_min								k_vif[11]
+#define		k_y_max								k_vif[12]
+#define		k_z_min								k_vif[13]
+#define		k_z_max								k_vif[14]
+#define		k_nd_ref							k_vif[15]
 //
-#define		k_search_incr_factor			k_vif[16]
+#define		k_search_incr_factor				k_vif[16]
 #define		k_search_kappa						k_vif[17]
-#define		k_dcell										k_vif[18]
-#define		k_buffersize							k_vif[19]
+#define		k_dcell								k_vif[18]
+#define		k_buffersize						k_vif[19]
 #define		k_dt_structure						k_vif[20]
 
 ////////////////////////////////////////////////////////////////////////
@@ -555,6 +557,133 @@ int_t gpu_count_boundary_numbers(const char*FileName)
 #define inp_m0  27
 ///////////////////////////////////////////////////////////////////////
 void read_input(part1*Pa1,char*INPUT)
+{
+  char FileName[256];
+	//strcpy(FileName,"./input/CaseH_n5.txt");
+	strcpy(FileName,INPUT);
+  char buffer[1024];
+  char *tok;    //token of string
+
+  int j,end,tmp,nov,nop;   //number of data, number of variables, number of partices
+  int lbl_var[100];
+  nov=nop=0;
+
+  FILE*inFile;
+  inFile=fopen(FileName,"r");
+
+  // count number of variables
+  fgets(buffer,1024-1,inFile);				// read first line
+  tok=strtok(buffer,"\t");						// line segmentation
+  while(tok!=NULL){
+	  tmp=atoi(tok);
+	  lbl_var[nov]=tmp;
+	  nov++;														// count number of segments(variables)
+	  tok=strtok(NULL,"\t");
+  }
+
+  // read data
+  while(1){
+		for(j=0;j<nov;j++){
+			end=fscanf(inFile,"%s\n",buffer);
+			if(end==-1) break;
+			switch(lbl_var[j]){
+			case inp_x:
+				Pa1[nop].x=atof(buffer);
+				//Pa2[nop].x0=atof(buffer);
+				break;
+			case inp_y:
+				Pa1[nop].y=atof(buffer);
+				//Pa2[nop].y0=atof(buffer);
+				break;
+			case inp_z:
+				Pa1[nop].z=atof(buffer);
+				//Pa2[nop].z0=atof(buffer);
+				break;
+			case inp_ux:
+				Pa1[nop].ux=atof(buffer);
+				//Pa2[nop].ux0=atof(buffer);
+				break;
+			case inp_uy:
+				Pa1[nop].uy=atof(buffer);
+				//Pa2[nop].uy0=atof(buffer);
+				break;
+			case inp_uz:
+				Pa1[nop].uz=atof(buffer);
+				//Pa2[nop].uz0=atof(buffer);
+				break;
+			case inp_m:
+				Pa1[nop].m=atof(buffer);
+				break;
+			case inp_ptype:
+				Pa1[nop].p_type=atoi(buffer);
+				break;
+			case inp_h:
+				Pa1[nop].h=atof(buffer);
+				break;
+			case inp_h0:
+				Pa1[nop].h_ref=atof(buffer);
+				break;
+			case inp_m0:
+				Pa1[nop].m_ref=atof(buffer);
+				break;
+			case inp_temp:
+				Pa1[nop].temp=atof(buffer);
+				break;
+			case inp_pres:
+				Pa1[nop].pres=atof(buffer);
+				break;
+			case inp_rho:
+				Pa1[nop].rho=atof(buffer);
+				//Pa2[nop].rho0=atof(buffer);
+				break;
+			case inp_rhoref:
+				//Pa2[nop].rho0=atof(buffer);
+				break;
+			case inp_ftotal:
+				//Pa3[nop].ftotal=atof(buffer);
+				break;
+			case inp_concn:
+				Pa1[nop].concn=atof(buffer);
+				//Pa2[nop].concn0=atof(buffer);
+				break;
+			case inp_cc:
+				//Pa2[nop].rho0=atof(buffer);
+				break;
+			case inp_ct_boundary:
+				break;
+			case inp_vist:
+				//Pa3[nop].vis_t=atof(buffer);
+				break;
+			case inp_lbl_surf:
+				break;
+			case inp_drho:
+				//Pa3[nop].drho=atof(buffer);
+				break;
+			case inp_denthalpy:
+				//Pa3[nop].denthalpy=atof(buffer);
+				break;
+			case inp_dconcn:
+				//Pa3[nop].dconcn=atof(buffer);
+				break;
+			case inp_dk:
+				//Pa3[nop].dk_turb=atof(buffer);
+				break;
+			case inp_de:
+				//Pa3[nop].de_turb=atof(buffer);
+				break;
+			default:
+				printf("undefined variable name");
+				break;
+			}
+		}
+		if(end==-1) break;
+		Pa1[nop].i_type=1;
+		nop++;
+  }
+  fclose(inFile);
+  printf("Input Files have been sucessfully read!!\n");
+}
+void read_input_LDM(L_part1*Pa1,char*INPUT)
 {
   char FileName[256];
 	//strcpy(FileName,"./input/CaseH_n5.txt");

@@ -1487,7 +1487,7 @@ __global__ void KERNEL_inlet_boundary(part1*P1){
 	Real a=0.0;
 	Real z_ref=0.0;
 
-	switch(terrain_type){
+	switch(k_terrain_type){
 		case 0:
 			a=0.14;
 			z_ref=300.0;

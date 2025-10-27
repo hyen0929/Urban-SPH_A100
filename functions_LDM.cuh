@@ -13,46 +13,45 @@ __device__ Real GaussianRand(curandState *s, Real mu, Real stdv){
 	return mag*cos(2*PI*u2)+mu;
 }
 
-__global__ void particle_releasing_Dispersion(Real tdt,Real ttime,Real tend,part4*P4) {
+__global__ void particle_releasing_Dispersion(Real tdt,Real ttime,Real tend,L_part1*LP1) {
 
 	int_t j;
 	double ttend;
 	ttend = tend;
 	if (ttime<=ttend){
 		for(j=k_num_part2*(ttime)/(ttend); j<k_num_part2*(ttime+tdt)/(ttend); j++){
-			P4[j].i_type=1;
+			LP1[j].i_type=1;
 		}
 	}
 
 }
 
-__global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,part4*P4,part5*P5,part6*P6)
+__global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,L_part2*LP2,L_part3*LP3)
 {
 	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
 
-
 	if(i>=k_num_part2) return;
-	//if(P4[i].p_type==0) return;
-	if(P4[i].i_type==3) return;
+	//if(LP1[i].p_type==0) return;
+	if(LP1[i].i_type==3) return;
 
 	int_t p_typei;
 	double tmp;
 
-	int_t buffer_type=P4[i].buffer_type;
+	int_t buffer_type=LP1[i].buffer_type;
 
-	p_typei=P4[i].p_type;
+	p_typei=LP1[i].p_type;
 
-	P5[i].x0=P4[i].x;															// update x-directional position
-	P5[i].y0=P4[i].y;															// update y-directional position
-	P5[i].z0=P4[i].z;															// update z-directional position
+	LP2[i].x0=LP1[i].x;															// update x-directional position
+	LP2[i].y0=LP1[i].y;															// update y-directional position
+	LP2[i].z0=LP1[i].z;															// update z-directional position
 
-	P5[i].ux0=P4[i].ux;														// update x-directional velocity
-	P5[i].uy0=P4[i].uy;														// update y-directional velocity
-	P5[i].uz0=P4[i].uz;														// update z-directional velocity
+	LP2[i].ux0=LP1[i].ux;														// update x-directional velocity
+	LP2[i].uy0=LP1[i].uy;														// update y-directional velocity
+	LP2[i].uz0=LP1[i].uz;														// update z-directional velocity
 
 }
 
-__global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, part4*P4, part5*P5, cfd_mesh* dev_cfd, Real xmin, Real xmax, Real xspan, Real ymin, Real ymax, Real yspan, Real zmin, Real zmax, Real zspan)
+__global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, L_part1*LP1, L_part2*LP2, cfd_mesh* dev_cfd, Real xmin, Real xmax, Real xspan, Real ymin, Real ymax, Real yspan, Real zmin, Real zmax, Real zspan)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
 
@@ -68,23 +67,23 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 	// Without this, particles would follow identical stochastic paths every timestep
 	unsigned long long time_hash = (unsigned long long)(tt * 1e6);
 
-	if (P4[i].seed < 1) {
+	if (LP1[i].seed < 1) {
 		// First time: initialize with particle ID and current time
-		P4[i].seed = i * 321215 + time_hash + 36893211;
-		seed = P4[i].seed;
+		LP1[i].seed = i * 321215 + time_hash + 36893211;
+		seed = LP1[i].seed;
 	}
 	else {
 		// Subsequent times: evolve seed with LCG + time mixing
-		seed = P4[i].seed;
+		seed = LP1[i].seed;
 		seed = (seed * 1103515245 + time_hash + 12345) % 2147483647;
-		P4[i].seed = seed;
+		LP1[i].seed = seed;
 	}
 
 	// Initialize curand state with time-dependent offset
 	curand_init(seed, i, (unsigned long long)(tt * 100), &ss);
 
 	if(i>=k_num_part2) return;
-	if(P4[i].i_type==3) return;
+	if(LP1[i].i_type==3) return;
 
 	Real tx0,ty0,tz0,ts0,xc,yc,zc,sc;									// position
 	Real tux0,tuy0,tuz0,uxc,uyc,uzc;						// velocity
@@ -94,14 +93,14 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 	Real k_turb, e_turb, yplus;
 	Real xwind, ywind, zwind;
 
-	tx0=P5[i].x0;														// x-directional initial position
-	ty0=P5[i].y0;														// x-directional initial position
-	tz0=P5[i].z0;														// x-directional initial position
-	ts0=P5[i].sigma0;
+	tx0=LP2[i].x0;														// x-directional initial position
+	ty0=LP2[i].y0;														// x-directional initial position
+	tz0=LP2[i].z0;														// x-directional initial position
+	ts0=LP2[i].sigma0;
 
-	tux0=P5[i].ux0;						// x-directional initial velocity
-	tuy0=P5[i].uy0;						// y-directional initial velocity
-	tuz0=P5[i].uz0;						// z-directional initial velocity
+	tux0=LP2[i].ux0;						// x-directional initial velocity
+	tuy0=LP2[i].uy0;						// y-directional initial velocity
+	tuz0=LP2[i].uz0;						// z-directional initial velocity
 
 	int numx = round((xmax-xmin)/xspan);
 	int numy = round((ymax-ymin)/yspan);
@@ -109,10 +108,10 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 
 	int xidx, yidx, zidx;
 
-	//  tmpXYZ; (ex. tmP401 = x-upside, y-downside, z-upside)
+	//  tmpXYZ; (ex. tmLP101 = x-upside, y-downside, z-upside)
 
 	// double tmp000, tmp001, tmp010, tmp011;
-	// double tmP400, tmP401, tmP410, tmP411;
+	// double tmLP100, tmLP101, tmLP110, tmLP111;
 
 	double vec001, vec010, vec100;
 
@@ -279,8 +278,8 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 	Real mu = 0.0;
 	Real stdv = 1;
 
-	int_t buffer_type=P4[i].buffer_type;
-	int_t p_type_i=P4[i].p_type;
+	int_t buffer_type=LP1[i].buffer_type;
+	int_t p_type_i=LP1[i].p_type;
 
 	// Real Ru = 0;
 	// Real Rv = 0;
@@ -374,34 +373,34 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 #endif
 	//zc=tz0;											// correct Z-directional position
 
-	P4[i].x=xc;															// update x-directional position
-	P4[i].y=yc;															// update y-directional position
-	P4[i].z=zc;															// update z-directional position
-	P4[i].sigma=sc;
+	LP1[i].x=xc;															// update x-directional position
+	LP1[i].y=yc;															// update y-directional position
+	LP1[i].z=zc;															// update z-directional position
+	LP1[i].sigma=sc;
 
-	P4[i].ux=uxc;														// update x-directional velocity
-	P4[i].uy=uyc;														// update y-directional velocity
-	P4[i].uz=uzc;														// update z-directional velocity
+	LP1[i].ux=uxc;														// update x-directional velocity
+	LP1[i].uy=uyc;														// update y-directional velocity
+	LP1[i].uz=uzc;														// update z-directional velocity
 
-	P4[i].uxr=uxc+xwind;
-	P4[i].uyr=uyc+ywind;
-	P4[i].uzr=uzc+zwind;
+	LP1[i].uxr=uxc+xwind;
+	LP1[i].uyr=uyc+ywind;
+	LP1[i].uzr=uzc+zwind;
 
-	P4[i].xwind = xwind;
-	P4[i].ywind = ywind;
-	P4[i].zwind = zwind;
-	P4[i].k_turb = k_turb;
-	P4[i].e_turb = e_turb;
-	P4[i].yplus = yplus;
-	P4[i].Tscale = Tu;
-	P4[i].Sigvel = Sigvel;
+	LP1[i].xwind = xwind;
+	LP1[i].ywind = ywind;
+	LP1[i].zwind = zwind;
+	LP1[i].k_turb = k_turb;
+	LP1[i].e_turb = e_turb;
+	LP1[i].yplus = yplus;
+	LP1[i].Tscale = Tu;
+	LP1[i].Sigvel = Sigvel;
 }
 
-__global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t*g_str, int_t*g_end, part4*P4, part5*P5, part1*P1)
+__global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t*g_str, int_t*g_end, L_part1*LP1, L_part2*LP2, part1*P1)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i>=k_num_part2) return;
-	if(P4[i].i_type==3) return;
+	if(LP1[i].i_type==3) return;
 
 	unsigned long long seed;
 	curandState ss;
@@ -414,16 +413,16 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	// Without this, particles would follow identical stochastic paths every timestep
 	unsigned long long time_hash = (unsigned long long)(tt * 1e6);
 
-	if (P4[i].seed < 1) {
+	if (LP1[i].seed < 1) {
 		// First time: initialize with particle ID and current time
-		P4[i].seed = i * 321215 + time_hash + 36893211;
-		seed = P4[i].seed;
+		LP1[i].seed = i * 321215 + time_hash + 36893211;
+		seed = LP1[i].seed;
 	}
 	else {
 		// Subsequent times: evolve seed with LCG + time mixing
-		seed = P4[i].seed;
+		seed = LP1[i].seed;
 		seed = (seed * 1103515245 + time_hash + 12345) % 2147483647;
-		P4[i].seed = seed;
+		LP1[i].seed = seed;
 	}
 
 	// Initialize curand state with time-dependent offset
@@ -441,25 +440,25 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 
 	Real tmp_flt=0.0;
 
-	tx0=P5[i].x0;														// x-directional initial position
-	ty0=P5[i].y0;														// x-directional initial position
-	tz0=P5[i].z0;														// x-directional initial position
-	ts0=P5[i].sigma0;
+	tx0=LP2[i].x0;														// x-directional initial position
+	ty0=LP2[i].y0;														// x-directional initial position
+	tz0=LP2[i].z0;														// x-directional initial position
+	ts0=LP2[i].sigma0;
 
-	tux0=P5[i].ux0;						// x-directional initial velocity
-	tuy0=P5[i].uy0;						// y-directional initial velocity
-	tuz0=P5[i].uz0;						// z-directional initial velocity
+	tux0=LP2[i].ux0;						// x-directional initial velocity
+	tuy0=LP2[i].uy0;						// y-directional initial velocity
+	tuz0=LP2[i].uz0;						// z-directional initial velocity
 
 	yplus=0.0;
 	sc=ts0;
 
 	Real xi,yi,zi,hi,search_range;
 	Real tmp_A;
-	xi=P4[i].x;
-	yi=P4[i].y;
-	zi=P4[i].z;
+	xi=LP1[i].x;
+	yi=LP1[i].y;
+	zi=LP1[i].z;
 
-	hi=P4[i].h;
+	hi=LP1[i].h;
 	int_t icell,jcell,kcell;
 
 	// calculate I,J,K in cell
@@ -472,7 +471,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	// out-of-range handling
 	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
 
-	int_t ncell=P4[i].ncell;
+	int_t ncell=LP1[i].ncell;
 	for(int_t z=-ncell;z<=ncell;z++){
 		for(int_t y=-ncell;y<=ncell;y++){
 			for(int_t x=-ncell;x<=ncell;x++){
@@ -569,8 +568,8 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	Real mu = 0.0;
 	Real stdv = 1;
 
-	int_t buffer_type=P4[i].buffer_type;
-	int_t p_type_i=P4[i].p_type;
+	int_t buffer_type=LP1[i].buffer_type;
+	int_t p_type_i=LP1[i].p_type;
 
 	Real drift_u = (Real)0.0;
 	Real drift_v = (Real)0.0;
@@ -593,25 +592,25 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	yc=ty0+(ywind+uyc)*(t_dt);												// correct Y-directional position
 	zc=tz0+(zwind+uzc)*(t_dt);
 
-	P4[i].x=xc;															// update x-directional position
-	P4[i].y=yc;															// update y-directional position
-	P4[i].z=zc;															// update z-directional position
-	P4[i].sigma=sc;
+	LP1[i].x=xc;															// update x-directional position
+	LP1[i].y=yc;															// update y-directional position
+	LP1[i].z=zc;															// update z-directional position
+	LP1[i].sigma=sc;
 
-	P4[i].ux=uxc;														// update x-directional velocity
-	P4[i].uy=uyc;														// update y-directional velocity
-	P4[i].uz=uzc;														// update z-directional velocity
+	LP1[i].ux=uxc;														// update x-directional velocity
+	LP1[i].uy=uyc;														// update y-directional velocity
+	LP1[i].uz=uzc;														// update z-directional velocity
 
-	P4[i].uxr=uxc+xwind;
-	P4[i].uyr=uyc+ywind;
-	P4[i].uzr=uzc+zwind;
+	LP1[i].uxr=uxc+xwind;
+	LP1[i].uyr=uyc+ywind;
+	LP1[i].uzr=uzc+zwind;
 
-	P4[i].xwind = xwind;
-	P4[i].ywind = ywind;
-	P4[i].zwind = zwind;
-	P4[i].k_turb = k_turb;
-	P4[i].e_turb = e_turb;
-	P4[i].yplus = yplus;
-	P4[i].Tscale = Tu;
-	P4[i].Sigvel = Sigvel;
+	LP1[i].xwind = xwind;
+	LP1[i].ywind = ywind;
+	LP1[i].zwind = zwind;
+	LP1[i].k_turb = k_turb;
+	LP1[i].e_turb = e_turb;
+	LP1[i].yplus = yplus;
+	LP1[i].Tscale = Tu;
+	LP1[i].Sigvel = Sigvel;
 }

@@ -38,12 +38,13 @@ void ISPH(int_t*vii,Real*vif)
 	printf("------------------------------------------------------------\n\n");
 	//-------------------------------------------------------------------------------------------------
 
-
 	//-------------------------------------------------------------------------------------------------
 	// 입출력 파일 이름 설정 (초기화)
 	//-------------------------------------------------------------------------------------------------
 	char INPUT_FILE_NAME[128];
-	strcpy(INPUT_FILE_NAME,"./input/CaseH_n10.txt");								// input file name and address
+	char INPUT_FILE_NAME2[128];
+	strcpy(INPUT_FILE_NAME,"./input/CaseH_n10.txt");       // input file name and address(SPH)
+	strcpy(INPUT_FILE_NAME2,"./input/CaseH_LDM.txt");	   // input file name and address(LDM)					
 
 	// char MARKER_INPUT_FILE_NAME[128];
 	// strcpy(MARKER_INPUT_FILE_NAME,"./input/marker.txt");
@@ -53,6 +54,7 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 
 	num_part=gpu_count_particle_numbers2(INPUT_FILE_NAME);
+	num_part_LDM=gpu_count_particle_numbers2(INPUT_FILE_NAME);
 	// num_marker=gpu_count_particle_numbers2(MARKER_INPUT_FILE_NAME);
 
 	//-------------------------------------------------------------------------------------------------
@@ -63,9 +65,13 @@ void ISPH(int_t*vii,Real*vif)
 	HP1=(part1*)malloc(num_part*sizeof(part1));
 	memset(HP1,0,sizeof(part1)*num_part);
 
+	HLP1=(L_part1*)malloc(num_part_LDM*sizeof(L_part1));
+	memset(HLP1,0,sizeof(L_part1)*num_part_LDM);
+
 
 	// 입력파일 (input.txt) 읽기
 	read_input(HP1,INPUT_FILE_NAME);
+	read_input_LDM(HLP1,INPUT_FILE_NAME2);
 
 	//-------------------------------------------------------------------------------------------------
 	// 셀 (Cell) 및 검색 범위 설정
@@ -76,7 +82,6 @@ void ISPH(int_t*vii,Real*vif)
 	search_incr_factor=1.0;											// coefficient for cell and search range (esk)
 
 	search_kappa=kappa;
-
 
 	//-------------------------------------------------------------------------------------------------
 	// 전체 계산 영역 파악 및 셀(Cell) 분할
