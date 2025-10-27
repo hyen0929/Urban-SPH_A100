@@ -58,7 +58,7 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 	// out-of-range handling
 	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
 
-	int_t ncell=int(Pressure_length)*P1[i].ncell;
+	int_t ncell=P1[i].ncell;
 	for(int_t z=-ncell;z<=ncell;z++){
 		for(int_t y=-ncell;y<=ncell;y++){
 			for(int_t x=-ncell;x<=ncell;x++){
@@ -91,7 +91,7 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 								rhoj=P1[j].rho;
 								rho_ref_j=P2[j].rho_ref;
 								presj=P1[j].pres;
-								hj=Pressure_length*P1[j].h;
+								hj=P1[j].h;
 
 								search_range=k_search_kappa*fmax(hi,hj);   // search range for multi-resolution (KDH)
 

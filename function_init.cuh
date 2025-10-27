@@ -50,6 +50,7 @@
 #define   structure_solv          vii[44]
 #define   atmos_stab		          vii[45]  // AeroSPHere (KDH)
 #define   terrain_type	          vii[46]  // AeroSPHere (KDH)
+#define	  freq_LDM   					vii[47]  // LDM frequency (KDH)
 
 // Real type variable define
 #define		kappa										vif[0]		// k in k*h
@@ -132,6 +133,7 @@
 #define   k_structure_solv          k_vii[44]
 #define   atmos_stab		          	k_vii[45]	 // AeroSPHere (KDH)
 #define   terrain_type	          	k_vii[46]  // AeroSPHere (KDH)
+#define		k_freq_LDM   					k_vii[47]  // LDM frequency (KDH)
 //
 // Real type variable define
 #define		k_kappa										k_vif[0]		// k in k*h
@@ -431,6 +433,11 @@ void read_solv_input(int_t*vii,Real*vif,const char*FileName)
 			fscanf(fd,"%s",&inputString);
 			fscanf(fd,"%s",&inputString);
 			freq_output=atoi(inputString);
+		}
+		if(strcmp(inputString,"LDM-frequency")==0){
+			fscanf(fd,"%s",&inputString);
+			fscanf(fd,"%s",&inputString);
+			freq_LDM=atoi(inputString);
 		}
 		if(strcmp(inputString,"APR_frequency:")==0){
 			fscanf(fd,"%s",&inputString);

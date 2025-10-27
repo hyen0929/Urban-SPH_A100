@@ -397,10 +397,11 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, pa
 	P4[i].Sigvel = Sigvel;
 }
 
-__global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4*P4, part5*P5, part1*P1)
+__global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t*g_str, int_t*g_end, part4*P4, part5*P5, part1*P1)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
-
+	if(i>=k_num_part2) return;
+	if(P4[i].i_type==3) return;
 
 	unsigned long long seed;
 	curandState ss;
@@ -428,9 +429,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4
 	// Initialize curand state with time-dependent offset
 	curand_init(seed, i, (unsigned long long)(tt * 100), &ss);
 
-	if(i>=k_num_part2) return;
-	if(P4[i].i_type==3) return;
-
 	Real tx0,ty0,tz0,ts0,xc,yc,zc,sc;									// position
 	Real tux0,tuy0,tuz0,uxc,uyc,uzc;						// velocity
 	Real tux,tuy,tuz;														// velocity
@@ -438,6 +436,10 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4
 
 	Real k_turb, e_turb, yplus;
 	Real xwind, ywind, zwind;
+	xwind=ywind=zwind=0.0;
+	k_turb=e_turb=0.0;
+
+	Real tmp_flt=0.0;
 
 	tx0=P5[i].x0;														// x-directional initial position
 	ty0=P5[i].y0;														// x-directional initial position
@@ -448,129 +450,114 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4
 	tuy0=P5[i].uy0;						// y-directional initial velocity
 	tuz0=P5[i].uz0;						// z-directional initial velocity
 
-	int numx = round((xmax-xmin)/xspan);
-	int numy = round((ymax-ymin)/yspan);
-	int numz = round((zmax-zmin)/zspan);
+	yplus=0.0;
+	sc=ts0;
 
-	int xidx, yidx, zidx;
+	Real xi,yi,zi,hi,search_range;
+	Real tmp_A;
+	xi=P4[i].x;
+	yi=P4[i].y;
+	zi=P4[i].z;
 
-	//  tmpXYZ; (ex. tmP401 = x-upside, y-downside, z-upside)
+	hi=P4[i].h;
+	int_t icell,jcell,kcell;
 
-	// double tmp000, tmp001, tmp010, tmp011;
-	// double tmP400, tmP401, tmP410, tmP411;
+	// calculate I,J,K in cell
+	if((k_x_max==k_x_min)){icell=0;}
+	else{icell=min(floor((xi-k_x_min)/k_dcell),k_NI-1);}
+	if((k_y_max==k_y_min)){jcell=0;}
+	else{jcell=min(floor((yi-k_y_min)/k_dcell),k_NJ-1);}
+	if((k_z_max==k_z_min)){kcell=0;}
+	else{kcell=min(floor((zi-k_z_min)/k_dcell),k_NK-1);}
+	// out-of-range handling
+	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
 
-	double vec001, vec010, vec100;
+	int_t ncell=P4[i].ncell;
+	for(int_t z=-ncell;z<=ncell;z++){
+		for(int_t y=-ncell;y<=ncell;y++){
+			for(int_t x=-ncell;x<=ncell;x++){
+				// int_t k=(icell+x)+k_NI*(jcell+y);
+				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
 
-	int xbasis, ybasis, zbasis;
+				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+				if(g_str[k]!=cu_memset){
+					int_t fend=g_end[k];
+					for(int_t j=g_str[k];j<fend;j++){
+						Real xj,yj,zj,hj,uxj,uyj,uzj,tdist;
+						Real rhoj,mj,presj,tempj,ptypej,rho_ref_j;
+						Real k_turbj, e_turbj;
+						int itype;
 
-	xidx = floor((tx0-xmin)/(xspan)+0.00001*SIZ);
-	if (xidx==round((xmax)/xspan)) xidx = round((xmax)/xspan)-1;
-	if (xidx<0) xidx=0;
-	yidx = floor((ty0-ymin)/(yspan)+0.00001*SIZ);
-	if (yidx==round((ymax)/yspan)) yidx = round((ymax)/yspan)-1;
-	if (yidx<0) yidx=0;
-	zidx = floor((tz0-zmin)/(zspan)+0.00001*SIZ);
-	if (zidx==round((zmax)/zspan)) zidx = round((zmax)/zspan)-1;
-	if (zidx<0) zidx=0;
+						ptypej=P1[j].p_type;
+						mj=P1[j].m;
 
-	xbasis = (tx0>=(xidx+0.5)*xspan)-(tx0<(xidx+0.5)*xspan);
-	ybasis = (ty0>=(yidx+0.5)*yspan)-(ty0<(yidx+0.5)*yspan);
-	zbasis = (tz0>=(zidx+0.5)*zspan)-(tz0<(zidx+0.5)*zspan);
+						if(P1[j].p_type==1){     // only for SPH fluid particles
+							xj=P1[j].x;
+							yj=P1[j].y;
+							zj=P1[j].z;
 
+							uxj=P1[j].ux;
+							uyj=P1[j].uy;
+							uzj=P1[j].uz;
 
-	if(zidx+1*zbasis>=numz||zidx+1*zbasis<0) vec001 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].u)<1e-9) vec001 = 0; // 0-value data handling
-	else vec001 = (dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].u-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].u)/2;
+							k_turbj=P1[j].k_turb;
+							e_turbj=P1[j].e_turb;
 
-	if(yidx+1*ybasis>=numy||yidx+1*ybasis<0) vec010 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].u)<1e-9) vec010 = 0; // 0-value data handling
-	else vec010 = (dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].u-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].u)/2;
+							rhoj=P1[j].rho;
+							hj=P1[j].h;
 
-	if(xidx+1*xbasis>=numx||xidx+1*xbasis<0) vec100 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].u)<1e-9) vec100 = 0; // 0-value data handling
-	else vec100 = (dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].u-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].u)/2;
+							search_range=k_search_kappa*fmax(hi,hj);   // search range for multi-resolution (KDH)
 
-	xwind = dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].u +
-			vec001*(tz0-(zidx+0.5)*zspan)*zbasis/(0.5*zspan) +
-			vec010*(ty0-(yidx+0.5)*yspan)*ybasis/(0.5*yspan) +
-			vec100*(tx0-(xidx+0.5)*xspan)*xbasis/(0.5*xspan);
+							tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 
+							if(tdist<search_range){
+								//if(i==135235) P1[j].PPE2=1.0;
+								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
+								
+								xwind+=uxj*mj/rhoj*twij;
+								ywind+=uyj*mj/rhoj*twij;
+								zwind+=uzj*mj/rhoj*twij;
 
-	if(zidx+1*zbasis>=numz||zidx+1*zbasis<0) vec001 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].v)<1e-9) vec001 = 0; // 0-value data handling
-	else vec001 = (dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].v-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].v)/2;
+								k_turb+=k_turbj*mj/rhoj*twij;
+								e_turb+=e_turbj*mj/rhoj*twij;
 
-	if(yidx+1*ybasis>=numy||yidx+1*ybasis<0) vec010 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].v)<1e-9) vec010 = 0; // 0-value data handling
-	else vec010 = (dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].v-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].v)/2;
+								tmp_flt += (mj/rhoj)*twij;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if(tmp_flt<1e-6){
+		xwind=0;
+		ywind=0;
+		zwind=0;
+		k_turb=1e-10;
+		e_turb=1e-10;
+	}
+	else{
+		// Normalize by total weight
+		xwind/=tmp_flt;
+		ywind/=tmp_flt;
+		zwind/=tmp_flt;
+		k_turb/=tmp_flt;
+		e_turb/=tmp_flt;
+	}
 
-	if(xidx+1*xbasis>=numx||xidx+1*xbasis<0) vec100 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].v)<1e-9) vec100 = 0; // 0-value data handling
-	else vec100 = (dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].v-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].v)/2;
-
-	ywind = dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].v +
-			vec001*(tz0-(zidx+0.5)*zspan)*zbasis/(0.5*zspan) +
-			vec010*(ty0-(yidx+0.5)*yspan)*ybasis/(0.5*yspan) +
-			vec100*(tx0-(xidx+0.5)*xspan)*xbasis/(0.5*xspan);
-
-
-	if(zidx+1*zbasis>=numz||zidx+1*zbasis<0) vec001 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].w)<1e-9) vec001 = 0; // 0-value data handling
-	else vec001 = (dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].w-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].w)/2;
-
-	if(yidx+1*ybasis>=numy||yidx+1*ybasis<0) vec010 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].w)<1e-9) vec010 = 0; // 0-value data handling
-	else vec010 = (dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].w-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].w)/2;
-
-	if(xidx+1*xbasis>=numx||xidx+1*xbasis<0) vec100 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].w)<1e-9) vec100 = 0; // 0-value data handling
-	else vec100 = (dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].w-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].w)/2;
-
-	zwind = dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].w +
-			vec001*(tz0-(zidx+0.5)*zspan)*zbasis/(0.5*zspan) +
-			vec010*(ty0-(yidx+0.5)*yspan)*ybasis/(0.5*yspan) +
-			vec100*(tx0-(xidx+0.5)*xspan)*xbasis/(0.5*xspan);
-
-
-	if(zidx+1*zbasis>=numz||zidx+1*zbasis<0) vec001 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].k_turb)<1e-9) vec001 = 0; // 0-value data handling
-	else vec001 = (dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].k_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].k_turb)/2;
-
-	if(yidx+1*ybasis>=numy||yidx+1*ybasis<0) vec010 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].k_turb)<1e-9) vec010 = 0; // 0-value data handling
-	else vec010 = (dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].k_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].k_turb)/2;
-
-	if(xidx+1*xbasis>=numx||xidx+1*xbasis<0) vec100 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].k_turb)<1e-9) vec100 = 0; // 0-value data handling
-	else vec100 = (dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].k_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].k_turb)/2;
-
-	k_turb = dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].k_turb +
-			vec001*(tz0-(zidx+0.5)*zspan)*zbasis/(0.5*zspan) +
-			vec010*(ty0-(yidx+0.5)*yspan)*ybasis/(0.5*yspan) +
-			vec100*(tx0-(xidx+0.5)*xspan)*xbasis/(0.5*xspan);
-
-
-	if(zidx+1*zbasis>=numz||zidx+1*zbasis<0) vec001 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].e_turb)<1e-9) vec001 = 0; // 0-value data handling
-	else vec001 = (dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx+1*zbasis)].e_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].e_turb)/2;
-
-	if(yidx+1*ybasis>=numy||yidx+1*ybasis<0) vec010 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].e_turb)<1e-9) vec010 = 0; // 0-value data handling
-	else vec010 = (dev_cfd[(xidx)*numy*numz+(yidx+1*ybasis)*numz+(zidx)].e_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].e_turb)/2;
-
-	if(xidx+1*xbasis>=numx||xidx+1*xbasis<0) vec100 = 0; // Avoid Index error
-	else if (abs(dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].e_turb)<1e-9) vec100 = 0; // 0-value data handling
-	else vec100 = (dev_cfd[(xidx+1*xbasis)*numy*numz+(yidx)*numz+(zidx)].e_turb-dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].e_turb)/2;
-
-	e_turb = dev_cfd[(xidx)*numy*numz+(yidx)*numz+(zidx)].e_turb +
-			vec001*(tz0-(zidx+0.5)*zspan)*zbasis/(0.5*zspan) +
-			vec010*(ty0-(yidx+0.5)*yspan)*ybasis/(0.5*yspan) +
-			vec100*(tx0-(xidx+0.5)*xspan)*xbasis/(0.5*xspan);
+	// Lagrangian Timescales
+	Real C0 = 1.76;  // Original value
 
 	// ========================================================================
 	// Turbulent Velocity Scale and Lagrangian Timescales
 	// ========================================================================
 	Real Sigvel = sqrt(2*k_turb/3);
+
+	// Original isotropic timescales
+	Real Tu = 2*Sigvel*Sigvel/C0/(e_turb+1e-10);
+	Real Tv = 2*Sigvel*Sigvel/C0/(e_turb+1e-10);
+	Real Tw = 2*Sigvel*Sigvel/C0/(e_turb+1e-10);
+
 	Real KH, KV;
 
 	Real t_dt=tdt;
@@ -585,6 +572,10 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4
 	int_t buffer_type=P4[i].buffer_type;
 	int_t p_type_i=P4[i].p_type;
 
+	Real drift_u = (Real)0.0;
+	Real drift_v = (Real)0.0;
+	Real drift_w = (Real)0.0;
+
 	// Stochastic diffusion term (standard Langevin)
 	dux_dt=Sigvel*GaussianRand(&ss, mu, stdv)*sqrt(1-Ru*Ru);			// x-directional acceleration
 	duy_dt=Sigvel*GaussianRand(&ss, mu, stdv)*sqrt(1-Rv*Rv);			// y-directional acceleration
@@ -594,16 +585,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, part4
 	uxc=tux0*Ru+dux_dt + drift_u*t_dt;										// correct x-directional velocity
 	uyc=tuy0*Rv+duy_dt + drift_v*t_dt;										// correct y-directional velocity
 	uzc=tuz0*Rw+duz_dt + drift_w*t_dt;
-
-
-	if(tx0>xmax || tx0<xmin || ty0>ymax || ty0<ymin || tz0>zmax || tz0<zmin){
-		xwind = 0;
-		ywind = 0;
-		zwind = 0;
-		uxc = 0;
-		uyc = 0;
-		uzc = 0;
-	}
 
 	// ========================================================================
 	// Position Update with Ground Reflection Boundary Condition

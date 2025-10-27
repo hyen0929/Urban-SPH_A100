@@ -4,6 +4,7 @@
 void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,int_t*g_str,int_t*g_end,
 	int_t*b_idx,int_t*b_idx_in,int_t*b_str,int_t*b_end,
 	part1*dev_P1,part1*dev_SP1,part2*dev_P2,part2*dev_SP2,part3*dev_P3,
+	part4*dev_P4,part4*dev_SP4,part5*dev_P5,part5*dev_SP5,part6*dev_P6,
 	int_t*p2p_af_in,int_t*p2p_idx_in,int_t*p2p_af,int_t*p2p_idx,
 	void*dev_sort_storage,size_t*sort_storage_bytes,part1*file_P1,part2*file_P2,part3*file_P3,int tid)
 	//int*apr_num_part,int_t*count_buffer,int_t*dev_count_buffer,int_t*num_buffer_temp,int_t*APR_cell,int_t*dev_APR_cell,Real*computing_time)
@@ -55,9 +56,15 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		pthread_barrier_wait(&barrier);
 		cudaMemcpy(dev_SP2,dev_P2,sizeof(part2)*num_part2,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
+		cudaMemcpy(dev_SP4,dev_P4,sizeof(part4)*num_part2,cudaMemcpyDeviceToDevice);
+		pthread_barrier_wait(&barrier);
+		cudaMemcpy(dev_SP5,dev_P5,sizeof(part5)*num_part2,cudaMemcpyDeviceToDevice);
+		pthread_barrier_wait(&barrier);
 
 		// 일부 입자정보 리셋
 		cudaMemset(dev_P3,0.0,sizeof(part3)*num_part2);
+		pthread_barrier_wait(&barrier);
+		cudaMemset(dev_P6,0.0,sizeof(part6)*num_part2);
 		pthread_barrier_wait(&barrier);
 	}
 
@@ -230,7 +237,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part2-1)/t.x+1;
-		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,dev_P4,dev_P5,dev_P1);
+		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_P4,dev_P5,dev_P1);
 		cudaDeviceSynchronize();
 	}
 
@@ -299,6 +306,20 @@ void*ISPH_Calc(void*arg){
 	file_P3=(part3*)malloc(sizeof(part3)*num_part2);
 	memset(file_P3,0,sizeof(part3)*num_part2);
 
+	// LDM 입자 배열
+	part4*file_P4;
+	file_P4=(part4*)malloc(sizeof(part4)*num_part2);
+	memset(file_P4,0,sizeof(part4)*num_part2);
+
+	part5*file_P5;
+	part6*file_P6;
+
+	file_P5=(part5*)malloc(sizeof(part5)*num_part2);
+	memset(file_P5,0,sizeof(part5)*num_part2);
+
+	file_P6=(part6*)malloc(sizeof(part6)*num_part2);
+	memset(file_P6,0,sizeof(part6)*num_part2);
+
 	//-------------------------------------------------------------------------------------------------
 	// Device/GPU 변수 선언 및 메모리 할당
 	//-------------------------------------------------------------------------------------------------
@@ -313,6 +334,11 @@ void*ISPH_Calc(void*arg){
 	part1*dev_P1,*dev_SP1;
 	part2*dev_P2,*dev_SP2;
 	part3*dev_SP3;
+
+	// 주요 LDM 변수
+	part4*dev_P4,*dev_SP4;
+	part5*dev_P5,*dev_SP5;
+	part6*dev_SP6;
 
 	// P2P 데이터 변수 선언
 	int*p2p_af_in,*p2p_idx_in,*p2p_af,*p2p_idx;
@@ -362,6 +388,13 @@ void*ISPH_Calc(void*arg){
 	cudaMalloc((void**)&dev_SP2,sizeof(part2)*num_part2);
 	cudaMalloc((void**)&dev_SP3,sizeof(part3)*num_part2);
 
+	// Device LDM 데이터 메모리 할당
+	cudaMalloc((void**)&dev_P4,sizeof(part4)*num_part2);
+	cudaMalloc((void**)&dev_SP4,sizeof(part4)*num_part2);
+	cudaMalloc((void**)&dev_P5,sizeof(part5)*num_part2);
+	cudaMalloc((void**)&dev_SP5,sizeof(part5)*num_part2);
+	cudaMalloc((void**)&dev_SP6,sizeof(part6)*num_part2);
+
 	// NNPS 메모리 초기화
 	cudaMemset(g_idx_in,0,sizeof(int_t)*num_part2);
 	cudaMemset(p_idx_in,0,sizeof(int_t)*num_part2);
@@ -376,6 +409,13 @@ void*ISPH_Calc(void*arg){
 	cudaMemset(dev_P2,0,sizeof(part2)*num_part2);
 	cudaMemset(dev_SP2,0,sizeof(part2)*num_part2);
 	cudaMemset(dev_SP3,0,sizeof(part3)*num_part2);
+
+	// Device LDM 입자 메모리 초기화
+	cudaMemset(dev_P4,0,sizeof(part4)*num_part2);
+	cudaMemset(dev_SP4,0,sizeof(part4)*num_part2);
+	cudaMemset(dev_P5,0,sizeof(part5)*num_part2);
+	cudaMemset(dev_SP5,0,sizeof(part5)*num_part2);
+	cudaMemset(dev_SP6,0,sizeof(part6)*num_part2);
 
 	//-------------------------------------------------------------------------------------------------
 	// Device/GPU로 데이터 복사
@@ -505,7 +545,7 @@ void*ISPH_Calc(void*arg){
 
 		if(ngpu==1){
 		SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
-					p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,tid);
+					dev_P4,dev_SP4,dev_P5,dev_SP5,dev_SP6,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,tid);
 		}
 
 		//-------------------------------------------------------------------------------------------------

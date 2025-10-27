@@ -152,7 +152,7 @@ typedef struct particles_array_4{
 	Real Sigvel;
 	unsigned long long seed;
 	// Real dx_pst, dy_pst, dz_pst; 						// particle shifting displacement
-
+	uint_t ncell;
 	// Real nx_s,ny_s,nz_s;									// surface normal vector --> not used
 }part4;
 ////////////////////////////////////////////////////////////////////////
