@@ -230,50 +230,50 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
   	// P1[i].uz_i = tmpuz/(filt+1e-10);
 
 	// the force applied to solid for no-slip condition
-	// P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
-	// P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
-  	// P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
-	{
-		// 주변 유체 보간 속도
-		Real ufx = tmpux/(filt+1e-10);
-		Real ufy = tmpuy/(filt+1e-10);
-		Real ufz = tmpuz/(filt+1e-10);
+	P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
+	P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
+  	P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+	// {
+	// 	// 주변 유체 보간 속도
+	// 	Real ufx = tmpux/(filt+1e-10);
+	// 	Real ufy = tmpuy/(filt+1e-10);
+	// 	Real ufz = tmpuz/(filt+1e-10);
 
-		// Surface normal vector
-		Real nx = P3[i].nx;
-		Real ny = P3[i].ny;
-		Real nz = P3[i].nz;
-		Real nmag = sqrt(nx*nx+ny*ny+nz*nz)+1e-20;
-		nx=nx/nmag;
-		ny=ny/nmag;
-		nz=nz/nmag;
+	// 	// Surface normal vector
+	// 	Real nx = P3[i].nx;
+	// 	Real ny = P3[i].ny;
+	// 	Real nz = P3[i].nz;
+	// 	Real nmag = sqrt(nx*nx+ny*ny+nz*nz)+1e-20;
+	// 	nx=nx/nmag;
+	// 	ny=ny/nmag;
+	// 	nz=nz/nmag;
 
-		// Normal/tangential 분해
-		Real un  = ufx*nx + ufy*ny + ufz*nz;
-		Real utx = ufx - un*nx;
-		Real uty = ufy - un*ny;
-		Real utz = ufz - un*nz;
+	// 	// Normal/tangential 분해
+	// 	Real un  = ufx*nx + ufy*ny + ufz*nz;
+	// 	Real utx = ufx - un*nx;
+	// 	Real uty = ufy - un*ny;
+	// 	Real utz = ufz - un*nz;
 
-		// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
-		Real Ubtx = 0.2*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
-		Real Ubty = 0.0f, Ubtz = 0.0f;
+	// 	// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
+	// 	Real Ubtx = 0.2*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
+	// 	Real Ubty = 0.0f, Ubtz = 0.0f;
 
-		//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
-		Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
-		Real ys     = 0.5f * P1[i].h;
-		Real tau_f  = max(2.0f*ys/Ut_mag, t_dt);
-		//Real beta_t = fminf(0.5f, t_dt/tau_f); //  (고정값 원하면 0.3 등으로 대체)
-		Real beta_t =1.0f;
+	// 	//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
+	// 	Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
+	// 	Real ys     = 0.5f * P1[i].h;
+	// 	Real tau_f  = max(2.0f*ys/Ut_mag, t_dt);
+	// 	//Real beta_t = fminf(0.5f, t_dt/tau_f); //  (고정값 원하면 0.3 등으로 대체)
+	// 	Real beta_t =1.0f;
 
-		// Normal은 불침투(강제), Tangential은 β_t로 완화
-		Real corrx = (-un)*nx + beta_t*(Ubtx - utx);
-		Real corry = (-un)*ny + beta_t*(Ubty - uty);
-		Real corrz = (-un)*nz + beta_t*(Ubtz - utz);
+	// 	// Normal은 불침투(강제), Tangential은 β_t로 완화
+	// 	Real corrx = (-un)*nx + beta_t*(Ubtx - utx);
+	// 	Real corry = (-un)*ny + beta_t*(Ubty - uty);
+	// 	Real corrz = (-un)*nz + beta_t*(Ubtz - utz);
 
-		P1[i].fbx = Rho_air * corrx / t_dt;
-		P1[i].fby = Rho_air * corry / t_dt;
-	  	P1[i].fbz = Rho_air * corrz / t_dt;
-	}
+	// 	P1[i].fbx = Rho_air * corrx / t_dt;
+	// 	P1[i].fby = Rho_air * corry / t_dt;
+	//   	P1[i].fbz = Rho_air * corrz / t_dt;
+	// }
 	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
 }
 

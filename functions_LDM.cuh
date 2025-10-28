@@ -13,13 +13,13 @@ __device__ Real GaussianRand(curandState *s, Real mu, Real stdv){
 	return mag*cos(2*PI*u2)+mu;
 }
 
-__global__ void particle_releasing_Dispersion(Real tdt,Real ttime,Real tend,L_part1*LP1) {
+__global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real tend,L_part1*LP1) {
 
 	int_t j;
 	double ttend;
 	ttend = tend;
 	if (ttime<=ttend){
-		for(j=k_num_part2*(ttime)/(ttend); j<k_num_part2*(ttime+tdt)/(ttend); j++){
+		for(j=k_num_part_LDM*(ttime)/(ttend); j<k_num_part_LDM*(ttime+freq*tdt)/(ttend); j++){
 			LP1[j].i_type=1;
 		}
 	}
@@ -30,7 +30,7 @@ __global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,
 {
 	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
 
-	if(i>=k_num_part2) return;
+	if(i>=k_num_part_LDM) return;
 	//if(LP1[i].p_type==0) return;
 	if(LP1[i].i_type==3) return;
 
@@ -82,7 +82,7 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, L_
 	// Initialize curand state with time-dependent offset
 	curand_init(seed, i, (unsigned long long)(tt * 100), &ss);
 
-	if(i>=k_num_part2) return;
+	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==3) return;
 
 	Real tx0,ty0,tz0,ts0,xc,yc,zc,sc;									// position
@@ -399,7 +399,7 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, L_
 __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t*g_str, int_t*g_end, L_part1*LP1, L_part2*LP2, part1*P1)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
-	if(i>=k_num_part2) return;
+	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==3) return;
 
 	unsigned long long seed;

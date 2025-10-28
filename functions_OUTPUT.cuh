@@ -120,7 +120,7 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="CaseH_n10_DDF(WL6,dt=2.5e-5,KGC,IBM_WM)";
+	char DirName[256]="CaseHS_LDM";
 	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
 	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
 	printf("Saving plot to '%s', count=%d\n",DirName,count);
@@ -593,5 +593,172 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 	}
 
 
+	fclose(outFile_vtk);
+}
+
+void save_vtk_bin_single_LDM(L_part1*LP1)
+{
+	int_t i,nop;//,nob;
+	nop=num_part_LDM;
+	// nob=number_of_boundaries;
+	int_t Nparticle=0;							// number of fluid particles (x>0.00) for 3D PGSFR calculation
+	int_t *plot_flag;
+	plot_flag = (int*)malloc(sizeof(int)*nop);
+	//for(i=0;i<nop;i++) if(P1[i].x>0) Nparticle++;
+	//for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
+	for(i=0;i<nop;i++) if((LP1[i].i_type==1)||(LP1[i].i_type==2)) {
+		Nparticle++;
+		plot_flag[i]=1;
+	}
+	printf("Number of Particles = %d\n\n",Nparticle);
+
+	float val;
+	int valt;
+
+	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
+	char FileName_vtk[256];
+	char DirName[256]="CaseHS_LDM";
+	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
+	sprintf(FileName_vtk,"./%s/LDM_%dstp.vtk",DirName, count);
+	printf("Saving plot to '%s', count=%d\n",DirName,count);
+	// If the file already exists,its contents are discarded and create the new one.
+	FILE*outFile_vtk;
+	outFile_vtk=fopen(FileName_vtk,"w");
+
+	fprintf(outFile_vtk,"# vtk DataFile Version 3.0\n");					// version & identifier: it must be shown.(ver 1.0/2.0/3.0)
+	fprintf(outFile_vtk,"Print out results in vtk format\n");			// header: description of file,it never exceeds 256 characters
+	fprintf(outFile_vtk,"BINARY\n");														// format of data (ACSII / BINARY)
+	fprintf(outFile_vtk,"DATASET POLYDATA\n");										// define DATASET format: 'POLYDATA' is proper to represent SPH particles
+
+	//Define SPH particles---------------------------------------------------------------
+	fprintf(outFile_vtk,"POINTS\t%d\tfloat\n",Nparticle);					// define particles position as POINTS
+	for(i=0;i<nop;i++){							// print out (x,y,z) coordinates of particles
+		//if(LP1[i].x>0){
+		if(plot_flag[i]==1){
+			val=FloatSwap(LP1[i].x);
+			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+			val=FloatSwap(LP1[i].y);
+			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+			val=FloatSwap(LP1[i].z);
+			fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+		}
+	}
+
+	fprintf(outFile_vtk,"POINT_DATA\t%d\n",Nparticle);
+
+	fprintf(outFile_vtk,"FIELD FieldData\t%d\n",num_LDM_data);
+
+	for (int ccount=0;ccount<num_LDM_data;ccount++)
+	{
+		char data_label[20];
+		strcpy(data_label,LDM_plot_data[ccount]);
+		// p_type
+		if (!strncmp(data_label,"p_type",3)) {
+			fprintf(outFile_vtk,"p_type\t1\t%d\tint\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				if(plot_flag[i]==1){
+					valt=IntSwap(LP1[i].p_type);
+					fwrite((void*)&valt,sizeof(int),1,outFile_vtk);
+				}
+			}
+		}
+
+		if (!strncmp(data_label,"velocity",4)) {
+			fprintf(outFile_vtk,"velocity\t3\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].ux);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(LP1[i].uy);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+					val=FloatSwap(LP1[i].uz);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		// flt_s
+		if (!strncmp(data_label,"flt_s",3)) {
+			fprintf(outFile_vtk,"flt_s\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].flt_s);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		// concn
+		if (!strncmp(data_label,"concn",5)) {
+			fprintf(outFile_vtk,"concn\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].concn);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		// concn
+		if (!strncmp(data_label,"concentration",6)) {
+			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].concentration);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		if (!strncmp(data_label,"mass",4)) {
+			fprintf(outFile_vtk,"mass\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].m);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		if (!strncmp(data_label,"ncell",5)) {
+			fprintf(outFile_vtk,"ncell\t1\t%d\tint\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					valt=IntSwap(LP1[i].ncell);
+					fwrite((void*)&valt,sizeof(int),1,outFile_vtk);
+				}
+			}
+		}
+		if (!strncmp(data_label,"k_turb",4)) {
+			fprintf(outFile_vtk,"k_turb\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].k_turb);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+		if (!strncmp(data_label,"e_turb",4)) {
+			fprintf(outFile_vtk,"e_turb\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(LP1[i].x>0){
+				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(LP1[i].e_turb);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+	}
 	fclose(outFile_vtk);
 }

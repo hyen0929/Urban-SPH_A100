@@ -100,7 +100,10 @@ __device__ int num_buffer[1];	// buffer 입자의 총 수를 저장하는 전역
 
 // Plot Data ______
 int num_plot_data;				// plot data 개수
-char plot_data[20][20]; 	// plot 할 변수
+char plot_data[20][20]; 	// plot 할 변수]
+
+int num_LDM_data;				// LDM plot data 개수
+char LDM_plot_data[20][20]; // LDM plot 할 변수
 
 //---------------------------------------------------------------
 

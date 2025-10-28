@@ -149,6 +149,8 @@ typedef struct LDM_particles_array_1{
 	Real sigu, sigv, sigw, dsigw;
 	Real disp_rho, disp_drho;
 
+	Real concentration;
+
 	Real yplus;
 	Real Tscale;
 	Real Sigvel;

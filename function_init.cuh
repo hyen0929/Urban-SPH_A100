@@ -436,8 +436,7 @@ void read_solv_input(int_t*vii,Real*vif,const char*FileName)
 			fscanf(fd,"%s",&inputString);
 			freq_output=atoi(inputString);
 		}
-		if(strcmp(inputString,"LDM-frequency")==0){
-			fscanf(fd,"%s",&inputString);
+		if(strcmp(inputString,"LDM-frequency:")==0){
 			fscanf(fd,"%s",&inputString);
 			freq_LDM=atoi(inputString);
 		}
@@ -459,6 +458,13 @@ void read_solv_input(int_t*vii,Real*vif,const char*FileName)
 			num_plot_data=atoi(inputString);
 			for(int ccount=0;ccount<num_plot_data;ccount++) {
 				fscanf(fd,"%s",plot_data[ccount]);
+			}
+		}
+		if(strcmp(inputString,"LDM-plot-variables:")==0){
+			fscanf(fd,"%s",&inputString);
+			num_LDM_data=atoi(inputString);
+			for(int ccount=0;ccount<num_LDM_data;ccount++) {
+				fscanf(fd,"%s",LDM_plot_data[ccount]);
 			}
 		}
 		if(strcmp(inputString,"velocity-limit")==0){

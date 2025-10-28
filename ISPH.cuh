@@ -43,8 +43,8 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 	char INPUT_FILE_NAME[128];
 	char INPUT_FILE_NAME2[128];
-	strcpy(INPUT_FILE_NAME,"./input/CaseH_n10.txt");       // input file name and address(SPH)
-	strcpy(INPUT_FILE_NAME2,"./input/CaseH_LDM.txt");	   // input file name and address(LDM)					
+	strcpy(INPUT_FILE_NAME,"./input/CaseHS_n10.txt");       // input file name and address(SPH)
+	strcpy(INPUT_FILE_NAME2,"./input/CaseHS_LDM.txt");	   // input file name and address(LDM)					
 
 	// char MARKER_INPUT_FILE_NAME[128];
 	// strcpy(MARKER_INPUT_FILE_NAME,"./input/marker.txt");
@@ -54,7 +54,7 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 
 	num_part=gpu_count_particle_numbers2(INPUT_FILE_NAME);
-	num_part_LDM=gpu_count_particle_numbers2(INPUT_FILE_NAME);
+	num_part_LDM=gpu_count_particle_numbers2(INPUT_FILE_NAME2);
 	// num_marker=gpu_count_particle_numbers2(MARKER_INPUT_FILE_NAME);
 
 	//-------------------------------------------------------------------------------------------------
@@ -179,6 +179,7 @@ void ISPH(int_t*vii,Real*vif)
 	}
 
 	free(HP1);
+	free(HLP1);
 	free(solve_thread);
 	free(tid);
 }

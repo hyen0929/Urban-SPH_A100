@@ -1,17 +1,17 @@
 
 //////////////////////////////////////////////////////////////////////////////
-// Single building (Case H, n=10)
-#define L1 	0   // min(x)+1.5*initial_particle_spacing
-#define L2	0.028 // min(x)+3.5*initial_particle_spacing
-#define L3	13.304 // max(x)-3.5*initial_particle_spacing
-#define L4	2210 // max(x)+1.0*initial_particle_spacing
+// // Single building (Case H, n=10)
+// #define L1 	0   // min(x)+1.5*initial_particle_spacing
+// #define L2	0.028 // min(x)+3.5*initial_particle_spacing
+// #define L3	13.304 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-#define L_left -0.412// min(y)+3.5*initial_particle_spacing
-#define L_right 0.412 // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 1.910
+// #define L_left -0.412// min(y)+3.5*initial_particle_spacing
+// #define L_right 0.412 // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 1.910
 
-#define L_MOST_x0 0.0
-#define L_MOST_xmax 1990.0
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
 //
 // // Single building (Case H, n=12)
 // #define L1 	0   // min(x)+1.5*initial_particle_spacing
@@ -26,15 +26,15 @@
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
-// // Single building (Case H, n=10, Scale up)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
+// Single building (Case HS, n=10, Scale up)
+#define L1 	0   // min(x)+1.5*initial_particle_spacing
+#define L2	3.5 // min(x)+3.5*initial_particle_spacing
+#define L3	2013.304 // max(x)-3.5*initial_particle_spacing
+#define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-// #define L_left -62.5// min(y)+3.5*initial_particle_spacing
-// #define L_right 62.5 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 121.0
+#define L_left -62.5// min(y)+3.5*initial_particle_spacing
+#define L_right 62.5 // max(y)-3.5*initial_particle_spacing
+#define L_ceiling 121.0
 
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
@@ -52,6 +52,8 @@
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
+//////////////////////////////////////////////////////////////////////////////
+
 
 __host__ float hash_random(int i, int seed) {
     uint32_t x = i * 73856093 ^ seed;
@@ -65,44 +67,6 @@ __host__ float box_muller(int i, int seed_a, int seed_b) {
 
     return sqrtf(-2.0f * logf(u1 + 1e-6f)) * cosf(2 * M_PI * u2);
 }
-// Single building (dx=2.5m, boundary width = 4)
-// #define L1 	0.0   // min(x)
-// #define L2	8.75 // min(x)+3.5*initial_particle_spacing
-// #define L3	1148.25 // max(x)-3.5*initial_particle_spacing
-// #define L4	1150.5 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left -241.25// min(y)+3.5*initial_particle_spacing
-// #define L_right 241.25 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 301.25
-//////////////////////////////////////////////////////////////////////////////
-// Single building (dx=2.5m, boundary width = 4)
-// #define L1 	0.0   // min(x)
-// #define L2	8.75 // min(x)+3.5*initial_particle_spacing
-// #define L3	1148.25 // max(x)-3.5*initial_particle_spacing
-// #define L4	1150.5 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left 8.75  // min(y)+3.5*initial_particle_spacing
-// #define L_right 491.25  // max(y)-3.5*initial_particle_spacing
-
-// // Flat terrain (dx=0.9m, boundary width = 4)
-// #define L1 	0.0   // min(x)
-// #define L2	3.15 // min(x)+3.5*initial_particle_spacing
-// #define L3	196.5 // max(x)-3.5*initial_particle_spacing
-// #define L4	1101.0 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left 3.15 // min(y)+3.5*initial_particle_spacing
-// #define L_right 46.35 // max(y)-3.5*initial_particle_spacing
-//////////////////////////////////////////////////////////////////////////////
-
-// // Flat terrain (dx=1.1m, boundary width = 4)
-// #define L1 	0.0   // min(x)
-// #define L2	3.85 // min(x)+3.5*initial_particle_spacing
-// #define L3	196.5 // max(x)-3.5*initial_particle_spacing
-// #define L4	1101.0 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left 3.85 // min(y)+3.5*initial_particle_spacing
-// #define L_right 45.65 // max(y)-3.5*initial_particle_spacing
-//////////////////////////////////////////////////////////////////////////////
 
 double Interpolate_ux_caseH(Real z_inp, Real scale){
   Real scale_factor=scale;             // (0.16 / Buidling height)
@@ -418,6 +382,32 @@ void c_initial_velocity(part1*HP1,part1*DHP1,int_t tid){
 	}
 
 }
+
+void c_initial_inner_outer_particle_single_LDM(L_part1*HLP1,L_part1*DHLP1,int_t tid){
+
+	int_t i,c_count;
+	Real xi0;
+	Real maxb,minb;
+
+	c_count=0;
+
+	for(i=0;i<num_part_LDM;i++){
+		HLP1[i].i_type=3;
+		HLP1[i].buffer_type=0;
+		// HP1[i].h=1.5;
+		// HP1[i].h_ref=HP1[i].h;
+		HLP1[i].m_ref=HLP1[i].m;
+		HLP1[i].ux=0.0;
+		HLP1[i].uy=0.0;
+		HLP1[i].uz=0.0;
+
+		HLP1[i].ncell=ncell_init;
+    	
+		DHLP1[c_count]=HLP1[i];
+		c_count++;
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////////
 void c_initial_inner_outer_particle(part1*HP1,part1*DHP1,int_t tid){
 

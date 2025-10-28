@@ -6,7 +6,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	part1*dev_P1,part1*dev_SP1,part2*dev_P2,part2*dev_SP2,part3*dev_P3,
 	L_part1*dev_LP1,L_part1*dev_SLP1,L_part2*dev_LP2,L_part2*dev_SLP2,L_part3*dev_LP3,
 	int_t*p2p_af_in,int_t*p2p_idx_in,int_t*p2p_af,int_t*p2p_idx,
-	void*dev_sort_storage,size_t*sort_storage_bytes,part1*file_P1,part2*file_P2,part3*file_P3,int tid)
+	void*dev_sort_storage,size_t*sort_storage_bytes,part1*file_P1,part2*file_P2,part3*file_P3,L_part1*file_LP1,int tid)
 	//int*apr_num_part,int_t*count_buffer,int_t*dev_count_buffer,int_t*num_buffer_temp,int_t*APR_cell,int_t*dev_APR_cell,Real*computing_time)
 {
 	dim3 b,t;
@@ -225,10 +225,10 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// int numy = round((ymax-ymin)/yspan);
 	// int numz = round((zmax-zmin)/zspan);
 
-	
-	if((count!=0)&&(count%freq_LDM==0)){
+	if((count%freq_LDM==0)){
 		b.x=(num_part2-1)/t.x+1;
-		particle_releasing_Dispersion<<<b,t>>>(dt,time,time_end,dev_LP1);
+		printf("LDM coupling at time=%.5f sec, count=%d \n",time,count);
+		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
 
 		if(time_type==Pre_Cor){
 			b.x=(num_part2-1)/t.x+1;
@@ -251,6 +251,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_flag(file_P1,file_P2,file_P3);
+
+		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
+		save_vtk_bin_single_LDM(file_LP1);
 
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
@@ -446,6 +449,17 @@ void*ISPH_Calc(void*arg){
 	cudaMemcpy(dev_P1,DHP1[tid],num_part2*sizeof(part1),cudaMemcpyHostToDevice);	// single gpu 이면 그냥 HP1을 device에 복사
 	pthread_barrier_wait(&barrier);
 
+	// Host 입자정보(HP1)를 분할하여(DHP1) Device로 복사(dev_P1) (LDM)
+	DHLP1[tid]=(L_part1*)malloc(num_part_LDM*sizeof(L_part1));
+	memset(DHLP1[tid],0,sizeof(L_part1)*num_part_LDM);
+
+	// 모든 입자를 더미로 초기화
+	for(int i=0;i<num_part_LDM;i++) DHLP1[tid][i].i_type=3;
+
+	c_initial_inner_outer_particle_single_LDM(HLP1,DHLP1[tid],tid);											// (CAUTION)
+	cudaMemcpy(dev_LP1,DHLP1[tid],num_part_LDM*sizeof(L_part1),cudaMemcpyHostToDevice);	// single gpu 이면 그냥 HP1을 device에 복사
+	pthread_barrier_wait(&barrier);
+
 	if(tid==0){
 		printf("\n-----------------------------------------------------------\n");
 		printf("GPU Domain Division Success\n");
@@ -478,7 +492,6 @@ void*ISPH_Calc(void*arg){
 	cudaMemset(d_max_umag0,0,sizeof(Real));
 	cudaMemset(d_max_rho0,0,sizeof(Real));
 	cudaMemset(d_max_ftotal0,0,sizeof(Real));
-
 
 	//-------------------------------------------------------------------------------------------------
 	// 정렬(Sorting)을 위한 CUB 라이브러리 변수 준비
@@ -545,7 +558,7 @@ void*ISPH_Calc(void*arg){
 
 		if(ngpu==1){
 		SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
-					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,dev_SLP3,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,tid);
+					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,dev_SLP3,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,file_LP1,tid);
 		}
 
 		//-------------------------------------------------------------------------------------------------
@@ -620,6 +633,11 @@ void*ISPH_Calc(void*arg){
 	cudaFree(dev_P2);
 	cudaFree(dev_SP2);
 	cudaFree(dev_SP3);
+	cudaFree(dev_LP1);
+	cudaFree(dev_SLP1);
+	cudaFree(dev_LP2);
+	cudaFree(dev_SLP2);
+	cudaFree(dev_SLP3);
 	cudaFree(max_umag);
 	cudaFree(max_rho);
 	cudaFree(max_ft);
