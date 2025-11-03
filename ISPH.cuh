@@ -43,8 +43,8 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 	char INPUT_FILE_NAME[128];
 	char INPUT_FILE_NAME2[128];
-	strcpy(INPUT_FILE_NAME,"./input/CaseHS_n10.txt");       // input file name and address(SPH)
-	strcpy(INPUT_FILE_NAME2,"./input/CaseHS_LDM.txt");	   // input file name and address(LDM)					
+	strcpy(INPUT_FILE_NAME,"./input/CaseRS_n10.txt");       // input file name and address(SPH)
+	strcpy(INPUT_FILE_NAME2,"./input/CaseRS_LDM.txt");	   // input file name and address(LDM)					
 
 	// char MARKER_INPUT_FILE_NAME[128];
 	// strcpy(MARKER_INPUT_FILE_NAME,"./input/marker.txt");

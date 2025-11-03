@@ -454,11 +454,14 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 
 	Real xi,yi,zi,hi,search_range;
 	Real tmp_A;
+
 	xi=LP1[i].x;
 	yi=LP1[i].y;
 	zi=LP1[i].z;
 
 	hi=LP1[i].h;
+	tmp_A=calc_tmpA(hi);
+
 	int_t icell,jcell,kcell;
 
 	// calculate I,J,K in cell
@@ -511,6 +514,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 
 							if(tdist<search_range){
 								//if(i==135235) P1[j].PPE2=1.0;
+								
 								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
 								
 								xwind+=uxj*mj/rhoj*twij;
@@ -594,7 +598,9 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 
 	LP1[i].x=xc;															// update x-directional position
 	LP1[i].y=yc;															// update y-directional position
-	LP1[i].z=zc;															// update z-directional position
+	LP1[i].z=zc;															// update z-directional position									
+	if(zc<=0) uzc=-uzc;							// 바닥 반사 조건(kdh)								
+	
 	LP1[i].sigma=sc;
 
 	LP1[i].ux=uxc;														// update x-directional velocity

@@ -26,31 +26,31 @@
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
-// Single building (Case HS, n=10, Scale up)
+// // Single building (Case HS, n=10, Scale up)
+// #define L1 	0   // min(x)+1.5*initial_particle_spacing
+// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
+// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -62.5// min(y)+3.5*initial_particle_spacing
+// #define L_right 62.5 // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 121.0
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// Single building (Case K, n=10, Scale up)
 #define L1 	0   // min(x)+1.5*initial_particle_spacing
 #define L2	3.5 // min(x)+3.5*initial_particle_spacing
 #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
 #define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-#define L_left -62.5// min(y)+3.5*initial_particle_spacing
-#define L_right 62.5 // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 121.0
+#define L_left -92.91666666  // min(y)+3.5*initial_particle_spacing
+#define L_right 92.91666666  // max(y)-3.5*initial_particle_spacing
+#define L_ceiling 1121.0
 
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// // Single building (Case K, n=10, Scale up)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left -92.91666666  // min(y)+3.5*initial_particle_spacing
-// #define L_right 92.91666666  // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 121.0
-//
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
+#define L_MOST_x0 0.0
+#define L_MOST_xmax 1990.0
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -69,8 +69,9 @@ __host__ float box_muller(int i, int seed_a, int seed_b) {
 }
 
 double Interpolate_ux_caseH(Real z_inp, Real scale){
-  Real scale_factor=scale;             // (0.16 / Buidling height)
-  Real z=scale_factor*z_inp;
+  Real z_scale=scale;             // (Building height / 0.16)
+  Real z=z_scale*z_inp;
+  Real u_scale=1.0;
   static const double z_data[] = {
         0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
         0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
@@ -111,7 +112,7 @@ double Interpolate_ux_caseH(Real z_inp, Real scale){
     double z0 = z_data[i-1], z1 = z_data[i];
     double u0 = u_data[i-1], u1 = u_data[i];
     double t  = (z - z0) / (z1 - z0);       // 0~1
-    return (1.0 - t) * u0 + t * u1;         // 선형 보간
+    return u_scale*((1.0 - t) * u0 + t * u1);         // 선형 보간
 }
 
 double Interpolate_k_caseH(Real z_inp, Real scale){
@@ -157,6 +158,50 @@ double Interpolate_k_caseH(Real z_inp, Real scale){
     return (1.0 - t) * u0 + t * u1;         // 선형 보간
 }
 
+double Interpolate_k_caseHS(Real z_inp){
+  Real z_scale = 0.16/20.0;             // (0.16 / Buidling height)
+  Real u_scale = 1.5;
+  Real z=z_scale*z_inp;
+  static const double z_data[] = {
+        0.00393,  0.01178,  0.02356,  0.04123,  0.06086,
+        0.08245,  0.10209,  0.11975,  0.14135,  0.16294,
+        0.21202,  0.23166,  0.25325,  0.30233,  0.35141,
+        0.40442,  0.4535,   0.50061,  0.55362,  0.60466,
+        0.70282,  0.74209
+    };
+    static const double u_data[] = {
+        0.3687,   0.39304,  0.4313,   0.49043,  0.53913,
+        0.56696,  0.58087,  0.62261,  0.62957,  0.64696,
+        0.66087,  0.64696,  0.62261,  0.5913,   0.51826,
+        0.4313,   0.3513,   0.25043,  0.17043,  0.10087,
+        0.0,      0.0
+    };
+    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
+
+    // 아래/위 한 점으로 외삽
+    if (z <= z_data[0]) {
+        double dz = z_data[1] - z_data[0];
+        double du = u_data[1] - u_data[0];
+        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
+    }
+    if (z >= z_data[N-1]) {
+        double dz = z_data[N-1] - z_data[N-2];
+        double du = u_data[N-1] - u_data[N-2];
+        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
+    }
+
+    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
+    const double* it = std::lower_bound(z_data, z_data + N, z);
+    std::size_t i = static_cast<std::size_t>(it - z_data);
+    // 안전장치 (이론상 도달 X)
+    if (i == 0) i = 1;
+
+    double z0 = z_data[i-1], z1 = z_data[i];
+    double u0 = u_data[i-1], u1 = u_data[i];
+    double t  = (z - z0) / (z1 - z0);       // 0~1
+    return ((1.0 - t) * u0 + t * u1)*u_scale;         // 선형 보간
+}
+
 void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 
 	int_t i,c_count;
@@ -174,7 +219,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		HP1[i].uy=0.0;
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
-    	Real scale_factor=0.16/0.16;       // 0.16/building_height
+    	Real scale_factor=0.16/20.0;       // 0.16(Experiment) / Building height
     	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
     	HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
     

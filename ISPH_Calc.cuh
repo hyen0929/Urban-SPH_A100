@@ -227,9 +227,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 	if((count%freq_LDM==0)){
 		b.x=(num_part2-1)/t.x+1;
-		printf("LDM coupling at time=%.5f sec, count=%d \n",time,count);
-		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
-
+		if(time>=20){
+		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time-20,time_end,dev_LP1);
+		}
 		if(time_type==Pre_Cor){
 			b.x=(num_part2-1)/t.x+1;
 			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2,dev_LP3);
@@ -237,7 +237,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part2-1)/t.x+1;
-		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time-20,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
 		cudaDeviceSynchronize();
 	}
 
@@ -250,7 +250,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P1,dev_P1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
-		save_vtk_bin_single_flag(file_P1,file_P2,file_P3);
+		if(count%1000==0)save_vtk_bin_single_flag(file_P1,file_P2,file_P3);
 
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);

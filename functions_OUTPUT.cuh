@@ -120,7 +120,7 @@ void save_vtk_bin_single_flag(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="CaseHS_LDM";
+	char DirName[256]="CaseRS_LDM";
 	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
 	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
 	printf("Saving plot to '%s', count=%d\n",DirName,count);
@@ -617,7 +617,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="CaseHS_LDM";
+	char DirName[256]="CaseRS_LDM(Frontfar)";
 	// sprintf(FileName_vtk,"./900X500X300(dx=5.0,dt=0.1,mu=1e-4)/fluid_%dstp.vtk",count);
 	sprintf(FileName_vtk,"./%s/LDM_%dstp.vtk",DirName, count);
 	printf("Saving plot to '%s', count=%d\n",DirName,count);
