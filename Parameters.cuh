@@ -130,6 +130,7 @@
 #define Pb 0.0
 #define tempb 300.0     // Temp0 for boussinesq
 
+// Deardorff SGS model constants
 #define Ck_sgs 0.1
 #define Ce_sgs 0.93
 #define Cs_sgs 0.15

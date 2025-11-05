@@ -93,6 +93,8 @@ typedef struct particles_array_3{
 	Real fpx,fpy,fpz,fbody;
 	Real dtemp;
 
+	Real omx,omy,omz;             // Vorticity (kdh)
+
 	Real dk_turb, de_trub;        // Turbulent kinetic energy, dissipation rate(for Deardorff model,KDH)
 	// Real virial,radius;
 

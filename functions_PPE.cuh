@@ -471,7 +471,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	// P3[i].fsy=tmpsy;
 	// P3[i].fsz=tmpsz;
 
-	P3[i].ftotal=sqrt(tmpx*tmpx+tmpy*tmpy+tmpz*tmpz);
+	P3[i].ftotal=sqrt(P3[i].ftotalx*P3[i].ftotalx+P3[i].ftotaly*P3[i].ftotaly+P3[i].ftotalz*P3[i].ftotalz);
 	if(k_concn_solve) P3[i].dconcn=tmp_Rd;
 
 	// if(isnan(P3[i].ftotalx)) printf("ftotalx:%f eulerx=%f\n",P3[i].ftotalx, eulerx);

@@ -691,3 +691,107 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	}
 	LP1[i].concn=tmpp;	
 }
+
+__global__ void KERNEL_compute_vorticity3D(int_t*g_str,int_t*g_end,part1*P1,part3*P3){
+	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+  if (i >= k_num_part2) return;
+  if (P1[i].i_type > i_type_crt) return;
+  if (P1[i].p_type >= 1000) return;  // IB 제외
+  if (P1[i].p_type <= 0) return;     // 유체만
+
+  // ---------------------
+  // 로컬 변수
+  // ---------------------
+  int_t icell, jcell, kcell;
+  Real xi = P1[i].x, yi = P1[i].y, zi = P1[i].z;
+  Real uxi = P1[i].ux, uyi = P1[i].uy, uzi = P1[i].uz;
+  Real rhoi = P1[i].rho;
+  Real hi   = P1[i].h;
+
+  // Changed: 다해상도/커널 준비
+  Real tmp_A = calc_tmpA(hi);
+  Real search_range = k_search_kappa * hi;
+
+  // grid cell index
+  if ((k_x_max==k_x_min)) icell=0; else icell=min(floor((xi-k_x_min)/k_dcell),k_NI-1);
+  if ((k_y_max==k_y_min)) jcell=0; else jcell=min(floor((yi-k_y_min)/k_dcell),k_NJ-1);
+  if ((k_z_max==k_z_min)) kcell=0; else kcell=min(floor((zi-k_z_min)/k_dcell),k_NK-1);
+  if (icell<0) icell=0; if (jcell<0) jcell=0; if (kcell<0) kcell=0;
+
+  // 누적: omega = (omx,omy,omz)
+  Real omx=0.0, omy=0.0, omz=0.0;
+
+  int_t ncell = P1[i].ncell;
+
+  for (int_t z=-ncell; z<=ncell; ++z){
+    for (int_t y=-ncell; y<=ncell; ++y){
+      for (int_t x=-ncell; x<=ncell; ++x){
+        int_t k = idx_cell(icell+x, jcell+y, kcell+z);
+        if (((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+
+        if (g_str[k]!=cu_memset){
+          int_t fend = g_end[k];
+          for (int_t j=g_str[k]; j<fend; ++j){
+            if (P1[j].p_type>=1000) continue;  // IB 제외
+
+            // self-skip는 굳이 안해도 됨(gradW가 0)
+            Real xj = P1[j].x, yj = P1[j].y, zj = P1[j].z;
+            Real hj = P1[j].h;
+
+            // Changed: 다해상도 탐색 반경
+            search_range = k_search_kappa * fmax(hi, hj);
+
+            Real rx = xi - xj;
+            Real ry = yi - yj;
+            Real rz = zi - zj;
+            Real tdist = sqrt(rx*rx + ry*ry + rz*rz) + 1e-20;
+            if (tdist >= search_range) continue;
+
+            // 속도/밀도/질량
+            Real uxj = P1[j].ux, uyj = P1[j].uy, uzj = P1[j].uz;
+            Real mj  = P1[j].m;
+            Real rhoj= P1[j].rho;
+
+            // ---------------------
+            // grad W_ij
+            // ---------------------
+            // 기본: i의 hi로 커널
+            Real tdwij = calc_kernel_dwij(tmp_A, hi, tdist);
+            Real tdwx  = tdwij * rx / tdist;
+            Real tdwy  = tdwij * ry / tdist;
+            Real tdwz  = tdwij * rz / tdist;
+
+            // Changed: gradient correction (기존 패턴과 동일)
+            if (k_kgc_solve>0){
+              Real twij_dummy = 0.0; // 함수 시그니처 유지용
+              apply_gradient_correction_3D(P3[i].Cm, twij_dummy,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
+            }
+
+            // ---------------------
+            // (u_j - u_i) × ∇W_ij
+            // ---------------------
+            Real dux = uxj - uxi;
+            Real duy = uyj - uyi;
+            Real duz = uzj - uzi;
+
+            // cross = du × gradW
+            Real cx =   duy*tdwz - duz*tdwy;
+            Real cy =   duz*tdwx - dux*tdwz;
+            Real cz =   dux*tdwy - duy*tdwx;
+
+            // 누적
+            Real w = mj / (rhoj + 1e-20);
+            omx += w * cx;
+            omy += w * cy;
+            omz += w * cz;
+          }
+        }
+      }
+    }
+  }
+
+  // 출력
+  P3[i].omx = omx;         // Changed
+  P3[i].omy = omy;         // Changed
+  P3[i].omz = omz;         // Changed
+}
