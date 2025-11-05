@@ -2,11 +2,14 @@
 // 모든 입자 계산을 수행하는 주함수 + LDM
 //-------------------------------------------------------------------------------------------------
 void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,int_t*g_str,int_t*g_end,
+	int_t*g_idx_LDM,int_t*p_idx_LDM,int_t*g_idx_in_LDM,int_t*p_idx_in_LDM,int_t*g_str_LDM,int_t*g_end_LDM,
 	int_t*b_idx,int_t*b_idx_in,int_t*b_str,int_t*b_end,
 	part1*dev_P1,part1*dev_SP1,part2*dev_P2,part2*dev_SP2,part3*dev_P3,
 	L_part1*dev_LP1,L_part1*dev_SLP1,L_part2*dev_LP2,L_part2*dev_SLP2,L_part3*dev_LP3,
 	int_t*p2p_af_in,int_t*p2p_idx_in,int_t*p2p_af,int_t*p2p_idx,
-	void*dev_sort_storage,size_t*sort_storage_bytes,part1*file_P1,part2*file_P2,part3*file_P3,L_part1*file_LP1,int tid)
+	void*dev_sort_storage,size_t*sort_storage_bytes,
+	void*dev_sort_storage_LDM,size_t*sort_storage_bytes_LDM,
+	part1*file_P1,part2*file_P2,part3*file_P3,L_part1*file_LP1,int tid)
 	//int*apr_num_part,int_t*count_buffer,int_t*dev_count_buffer,int_t*num_buffer_temp,int_t*APR_cell,int_t*dev_APR_cell,Real*computing_time)
 {
 	dim3 b,t;
@@ -56,25 +59,50 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		pthread_barrier_wait(&barrier);
 		cudaMemcpy(dev_SP2,dev_P2,sizeof(part2)*num_part2,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
-		cudaMemcpy(dev_SLP1,dev_LP1,sizeof(L_part1)*num_part2,cudaMemcpyDeviceToDevice);
+		cudaMemcpy(dev_SLP1,dev_LP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
-		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part2,cudaMemcpyDeviceToDevice);
+		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
 
 		// 일부 입자정보 리셋
 		cudaMemset(dev_P3,0.0,sizeof(part3)*num_part2);
 		pthread_barrier_wait(&barrier);
-		cudaMemset(dev_LP3,0.0,sizeof(L_part3)*num_part2);
+		cudaMemset(dev_LP3,0.0,sizeof(L_part3)*num_part_LDM);
+		pthread_barrier_wait(&barrier);
+	}
+
+	if(count%freq_output==0){
+		// g_str을 리셋
+		cudaMemset(g_str_LDM,cu_memset,sizeof(int_t)*num_cells);
+
+		// 입자의 셀번호 계산
+		b.x=(num_part_LDM-1)/t.x+1;
+		KERNEL_index_particle_to_cell_LDM<<<b,t>>>(g_idx_in_LDM,p_idx_in_LDM,dev_LP1);
+		cudaDeviceSynchronize();
+
+		// 셀번호를 바탕으로 정렬
+		cub::DeviceRadixSort::SortPairs(dev_sort_storage_LDM,*sort_storage_bytes_LDM,g_idx_in_LDM,g_idx_LDM,p_idx_in_LDM,p_idx_LDM,num_part_LDM);
+		cudaDeviceSynchronize();
+
+		// 정렬한 입자를 재배치
+		b.x=(num_part_LDM-1)/t.x+1;
+		KERNEL_reorder_LDM<<<b,t,s>>>(g_idx_LDM,p_idx_LDM,g_str_LDM,g_end_LDM,dev_LP1,dev_LP2,dev_SLP1,dev_SLP2);
+		cudaDeviceSynchronize();
+
+		// 일부 입자정보 리셋
+		cudaMemset(dev_LP3,0.0,sizeof(L_part3)*num_part_LDM);
+
+		// 입자정보를 P1 에 복사
+		cudaMemcpy(dev_LP1,dev_SLP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
 	}
 
 //-------------------------------------------------------------------------------------------------
 // 계산 준비: gradient correction, filter, reference density, p_type switch, penetration, density gradient
 //-------------------------------------------------------------------------------------------------
-
+	b.x=(num_part2-1)/t.x+1;
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
 	if(count==0){
-		b.x=(num_part2-1)/t.x+1;
 		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 		cudaDeviceSynchronize();
 	}
@@ -184,7 +212,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 // 시간 적분 (Time Integration)
 //-------------------------------------------------------------------------------------------------
-
 	b.x=(num_part2-1)/t.x+1;
 	KERNEL_time_update_projection<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	cudaDeviceSynchronize();
@@ -224,21 +251,23 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// int numx = round((xmax-xmin)/xspan);
 	// int numy = round((ymax-ymin)/yspan);
 	// int numz = round((zmax-zmin)/zspan);
+	Real Release_time=0.0;
 
 	if((count%freq_LDM==0)){
-		b.x=(num_part2-1)/t.x+1;
-		if(time>=20){
-		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time-20,time_end,dev_LP1);
-		}
+		b.x=(num_part_LDM-1)/t.x+1;
+		if(time>=Release_time){
+		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time-Release_time,time_end,dev_LP1);
 		if(time_type==Pre_Cor){
-			b.x=(num_part2-1)/t.x+1;
+			b.x=(num_part_LDM-1)/t.x+1;
 			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2,dev_LP3);
 			cudaDeviceSynchronize();
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
-		b.x=(num_part2-1)/t.x+1;
-		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time-20,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		b.x=(num_part_LDM-1)/t.x+1;
+		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time-Release_time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		if(count%freq_output==0) KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
 		cudaDeviceSynchronize();
+		}
 	}
 
 //-------------------------------------------------------------------------------------------------
@@ -250,7 +279,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P1,dev_P1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
-		if(count%1000==0)save_vtk_bin_single_flag(file_P1,file_P2,file_P3);
+		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
+		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
+		if(count%100==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
 
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);
@@ -329,6 +360,7 @@ void*ISPH_Calc(void*arg){
 
 	// NNPS 관련 변수
 	int_t*g_idx,*p_idx,*g_idx_in,*p_idx_in,*g_str,*g_end;
+	int_t*g_idx_LDM,*p_idx_LDM,*g_idx_in_LDM,*p_idx_in_LDM,*g_str_LDM,*g_end_LDM;
 	int_t*b_idx,*b_idx_in,*b_str,*b_end;
 
 	num_blocks=NBI*NBJ*NBK;
@@ -379,6 +411,13 @@ void*ISPH_Calc(void*arg){
 	cudaMalloc((void**)&g_str,sizeof(int_t)*num_cells);
 	cudaMalloc((void**)&g_end,sizeof(int_t)*num_cells);
 
+	cudaMalloc((void**)&g_idx_LDM,sizeof(int_t)*num_part_LDM);
+	cudaMalloc((void**)&p_idx_LDM,sizeof(int_t)*num_part_LDM);
+	cudaMalloc((void**)&g_idx_in_LDM,sizeof(int_t)*num_part_LDM);
+	cudaMalloc((void**)&p_idx_in_LDM,sizeof(int_t)*num_part_LDM);
+	cudaMalloc((void**)&g_str_LDM,sizeof(int_t)*num_cells);
+	cudaMalloc((void**)&g_end_LDM,sizeof(int_t)*num_cells);
+
 	cudaMalloc((void**)&b_idx,sizeof(int_t)*num_part2);
 	cudaMalloc((void**)&b_idx_in,sizeof(int_t)*num_part2);
 	cudaMalloc((void**)&b_str,sizeof(int_t)*num_blocks);
@@ -405,6 +444,13 @@ void*ISPH_Calc(void*arg){
 	cudaMemset(p_idx,0,sizeof(int_t)*num_part2);
 	cudaMemset(g_str,cu_memset,sizeof(int_t)*num_cells);
 	cudaMemset(g_end,0,sizeof(int_t)*num_cells);
+
+	cudaMemset(g_idx_in_LDM,0,sizeof(int_t)*num_part_LDM);
+	cudaMemset(p_idx_in_LDM,0,sizeof(int_t)*num_part_LDM);
+	cudaMemset(g_idx_LDM,0,sizeof(int_t)*num_part_LDM);
+	cudaMemset(p_idx_LDM,0,sizeof(int_t)*num_part_LDM);
+	cudaMemset(g_str_LDM,cu_memset,sizeof(int_t)*num_cells);
+	cudaMemset(g_end_LDM,0,sizeof(int_t)*num_cells);
 
 	// Device 입자 메모리 초기화
 	cudaMemset(dev_P1,0,sizeof(part1)*num_part2);
@@ -466,7 +512,6 @@ void*ISPH_Calc(void*arg){
 		printf("-----------------------------------------------------------\n\n");
 	}
 
-
 	//-------------------------------------------------------------------------------------------------
 	// 화면 출력용 기타 변수들 정의 및 메모리 할당 (최대속도, 최대힘 등)
 	//-------------------------------------------------------------------------------------------------
@@ -499,15 +544,19 @@ void*ISPH_Calc(void*arg){
 
 	// Sorting & Max variable to use CUB Library
 	void*dev_sort_storage=NULL;
+	void*dev_sort_storage_LDM=NULL;
 	void*dev_max_storage=NULL;
 	size_t sort_storage_bytes=0;
+	size_t sort_storage_bytes_LDM=0;
 	size_t max_storage_bytes=0;
 
 	// Determine Sorting & Maximum Value Setting for Total Particle Data
 	cub::DeviceRadixSort::SortPairs(dev_sort_storage,sort_storage_bytes,g_idx_in,g_idx,p_idx_in,p_idx,num_part2);
+	cub::DeviceRadixSort::SortPairs(dev_sort_storage_LDM,sort_storage_bytes_LDM,g_idx_in_LDM,g_idx_LDM,p_idx_in_LDM,p_idx_LDM,num_part_LDM);
 	cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_umag,d_max_umag0,num_part2);
 	cudaDeviceSynchronize();
 	cudaMalloc((void**)&dev_sort_storage,sort_storage_bytes);
+	cudaMalloc((void**)&dev_sort_storage_LDM,sort_storage_bytes_LDM);
 	cudaMalloc((void**)&dev_max_storage,max_storage_bytes);
 	pthread_barrier_wait(&barrier);
 
@@ -557,8 +606,8 @@ void*ISPH_Calc(void*arg){
 	while(1){
 
 		if(ngpu==1){
-		SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
-					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,dev_SLP3,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,file_LP1,tid);
+		SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,g_idx_LDM,p_idx_LDM,g_idx_in_LDM,p_idx_in_LDM,g_str_LDM,g_end_LDM,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
+					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,dev_SLP3,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,dev_sort_storage_LDM,&sort_storage_bytes_LDM,file_P1,file_P2,file_P3,file_LP1,tid);
 		}
 
 		//-------------------------------------------------------------------------------------------------
@@ -628,6 +677,12 @@ void*ISPH_Calc(void*arg){
 	cudaFree(p_idx_in);
 	cudaFree(g_str);
 	cudaFree(g_end);
+	cudaFree(g_idx_LDM);
+	cudaFree(p_idx_LDM);
+	cudaFree(g_idx_in_LDM);
+	cudaFree(p_idx_in_LDM);
+	cudaFree(g_str_LDM);
+	cudaFree(g_end_LDM);
 	cudaFree(dev_P1);
 	cudaFree(dev_SP1);
 	cudaFree(dev_P2);

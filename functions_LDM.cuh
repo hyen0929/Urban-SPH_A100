@@ -620,3 +620,74 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	LP1[i].Tscale = Tu;
 	LP1[i].Sigvel = Sigvel;
 }
+
+__global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part_LDM) return;
+	if(LP1[i].i_type==3) return;
+
+	int_t ptypei;
+	int_t icell,jcell,kcell;
+	Real xi,yi,zi;
+	Real pi;														// pressure
+	Real flt_si;
+	Real tmpp;
+	Real search_range,tmp_h,tmp_A;
+	Real pc=0.0;
+
+	tmp_h=LP1[i].h;
+	tmp_A=calc_tmpA(tmp_h);
+	search_range=k_search_kappa*tmp_h;								// search range
+
+	ptypei=LP1[i].p_type;
+
+	xi=LP1[i].x;
+	yi=LP1[i].y;
+	zi=LP1[i].z;
+
+	flt_si=LP1[i].flt_s;
+
+	// calculate I,J,K in cell
+	if((k_x_max==k_x_min)){icell=0;}
+	else{icell=min(floor((xi-k_x_min)/(k_x_max-k_x_min)*k_NI),k_NI-1);}
+	if((k_y_max==k_y_min)){jcell=0;}
+	else{jcell=min(floor((yi-k_y_min)/(k_y_max-k_y_min)*k_NJ),k_NJ-1);}
+	if((k_z_max==k_z_min)){kcell=0;}
+	else{kcell=min(floor((zi-k_z_min)/(k_z_max-k_z_min)*k_NK),k_NK-1);}
+	// out-of-range handling
+	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
+
+	tmpp=0.0;
+	int_t ncell=LP1[i].ncell;
+	for(int_t z=-ncell;z<=ncell;z++){
+		for(int_t y=-ncell;y<=ncell;y++){
+			for(int_t x=-ncell;x<=ncell;x++){
+				// int_t k=(icell+x)+k_NI*(jcell+y)+k_NI*k_NJ*(kcell+z);
+				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
+
+				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+				if(g_str[k]!=cu_memset){
+					int_t fend=g_end[k];
+					for(int_t j=g_str[k];j<fend;j++){
+						Real xj,yj,zj,tdist;
+						xj=LP1[j].x;
+						yj=LP1[j].y;
+						zj=LP1[j].z;
+
+						tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
+						if(tdist<search_range){
+							Real twij,pj,mj,rhoj,ptype_j;
+							twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
+							mj=LP1[j].m;
+							rhoj=LP1[j].rho;
+
+							tmpp+=1;
+						}
+					}
+				}
+			}
+		}
+	}
+	LP1[i].concn=tmpp;	
+}

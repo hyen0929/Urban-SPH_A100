@@ -26,31 +26,31 @@
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
-// // Single building (Case HS, n=10, Scale up)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -62.5// min(y)+3.5*initial_particle_spacing
-// #define L_right 62.5 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 121.0
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// Single building (Case K, n=10, Scale up)
+// Single building (Case HS, n=10, Scale up)
 #define L1 	0   // min(x)+1.5*initial_particle_spacing
 #define L2	3.5 // min(x)+3.5*initial_particle_spacing
 #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
 #define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-#define L_left -92.91666666  // min(y)+3.5*initial_particle_spacing
-#define L_right 92.91666666  // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 1121.0
+#define L_left -62.5// min(y)+3.5*initial_particle_spacing
+#define L_right 62.5 // max(y)-3.5*initial_particle_spacing
+#define L_ceiling 121.0
 
-#define L_MOST_x0 0.0
-#define L_MOST_xmax 1990.0
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// // Single building (Case RS, n=10, Scale up)
+// #define L1 	0   // min(x)+1.5*initial_particle_spacing
+// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
+// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -132.5    // min(y)+3.5*initial_particle_spacing
+// #define L_right 132.5    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 148.0
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -869,6 +869,38 @@ __global__ void KERNEL_reorder(int_t*g_idx,int_t*p_idx,int_t*g_str,int_t*g_end,p
 	SP1[idx]=P1[sortedIndex];
 	SP2[idx]=P2[sortedIndex];
 }
+__global__ void KERNEL_reorder_LDM(int_t*g_idx,int_t*p_idx,int_t*g_str,int_t*g_end,L_part1*P1,L_part2*P2,L_part1*SP1,L_part2*SP2)
+{
+	extern __shared__ int sharedHash[];
+
+	int idx=threadIdx.x+blockIdx.x*blockDim.x;
+	if(idx>=k_num_part_LDM) return;
+	int hash;
+
+	hash=g_idx[idx];
+
+	//if (hash>=k_num_cells && P1[idx].i_type!=3) printf("itype=%d hash %d k_num_cells %d\n", P1[idx].i_type, hash, k_num_cells);
+
+	sharedHash[threadIdx.x+1]=hash;
+	if(idx>0&&threadIdx.x==0){
+		/*save the end of the previous block g_idx*/
+		sharedHash[0]=g_idx[idx-1];
+	}
+	__syncthreads();		// for sorting and reorder particle property
+	if(idx==0||hash!=sharedHash[threadIdx.x]){
+		//if(hash<=k_num_cells) {
+			g_str[hash]=idx;
+			if(idx>0) g_end[sharedHash[threadIdx.x]]=idx;
+		//}
+	}
+	// if((idx==k_num_part2-1)&&(hash<k_num_cells)) g_end[hash]=idx+1;
+	if((idx==k_num_part2-1)) g_end[hash]=idx+1;
+	/*reorder data*/
+	int sortedIndex=p_idx[idx];
+
+	SP1[idx]=P1[sortedIndex];
+	SP2[idx]=P2[sortedIndex];
+}
 ////////////////////////////////////////////////////////////////////////
 __global__ void KERNEL_reorder_single(int_t*b_idx,int_t*p_idx,int_t*b_str,int_t*b_end,part1*P1,part2*P2,part1*SP1,part2*SP2)
 {
@@ -907,6 +939,36 @@ __global__ void KERNEL_index_particle_to_cell(int_t*g_idx,int_t*p_idx,part1*P1)
 {
 	int_t idx=threadIdx.x+blockIdx.x*blockDim.x;
 	if(idx>=k_num_part2) return;
+	// Not in Each GPUs Domain
+	if(P1[idx].i_type==3){
+		g_idx[idx]=k_num_cells;
+		p_idx[idx]=idx;
+	}
+	else {
+		int_t icell,jcell,kcell;
+		// calculate I,J,K in cell
+		if((k_x_max==k_x_min)){icell=0;}
+		else{icell=min(floor((P1[idx].x-k_x_min)/(k_x_max-k_x_min)*k_NI),k_NI-1);}
+		if((k_y_max==k_y_min)){jcell=0;}
+		else{jcell=min(floor((P1[idx].y-k_y_min)/(k_y_max-k_y_min)*k_NJ),k_NJ-1);}
+		if((k_z_max==k_z_min)){kcell=0;}
+		else{kcell=min(floor((P1[idx].z-k_z_min)/(k_z_max-k_z_min)*k_NK),k_NK-1);}
+		// out-of-range handling
+		if(icell<0) icell=0;
+		if(jcell<0) jcell=0;
+		if(kcell<0) kcell=0;
+		// calculate cell index from I,J,K
+		p_idx[idx]=idx;
+		g_idx[idx]=idx_cell(icell,jcell,kcell);
+	}
+
+	if(g_idx[idx]==k_num_cells && P1[idx].i_type!=3) printf("itype %d \n", P1[idx].i_type);
+}
+
+__global__ void KERNEL_index_particle_to_cell_LDM(int_t*g_idx,int_t*p_idx,L_part1*P1)
+{
+	int_t idx=threadIdx.x+blockIdx.x*blockDim.x;
+	if(idx>=k_num_part_LDM) return;
 	// Not in Each GPUs Domain
 	if(P1[idx].i_type==3){
 		g_idx[idx]=k_num_cells;
