@@ -106,6 +106,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 // 계산 준비: gradient correction, filter, reference density, p_type switch, penetration, density gradient
 //-------------------------------------------------------------------------------------------------
+	if(time<10){
 	b.x=(num_part2-1)/t.x+1;
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
 	if(count==0){
@@ -252,17 +253,16 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 	KERNEL_compute_vorticity3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 	cudaDeviceSynchronize();
+}
 
 //-------------------------------------------------------------------------------------------------
 // LDM coupling
 //-------------------------------------------------------------------------------------------------
 
-	Real Release_time=20.0;
 
 	if((count%freq_LDM==0)){
 		b.x=(num_part_LDM-1)/t.x+1;
-		if(time>=Release_time){
-		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time-Release_time,time_end,dev_LP1);
+		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
 		if(time_type==Pre_Cor){
 			b.x=(num_part_LDM-1)/t.x+1;
 			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2,dev_LP3);
@@ -270,10 +270,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part_LDM-1)/t.x+1;
-		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time-Release_time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
 		KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
 		cudaDeviceSynchronize();
-		}
 	}
 
 //-------------------------------------------------------------------------------------------------
@@ -287,7 +286,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
-		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
+		if(count%2000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
 		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
 
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
@@ -311,7 +310,7 @@ void*ISPH_Calc(void*arg){
 
 	// 계산 시간 측정
 	clock_t start, end;
-  double cpu_time_used;
+  	double cpu_time_used;
 
 	start=clock();
 
@@ -627,7 +626,7 @@ void*ISPH_Calc(void*arg){
 			count++;
 
 			//timestep is updated every 10 steps ------------ estimate new timestep (Goswami & Pajarola(2011))
-			if((count%freq_output)==0){
+			if((count%50)==0){
 				dim3 t,b;
 				t.x=128;
 				b.x=(num_part2-1)/t.x+1;

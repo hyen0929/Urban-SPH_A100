@@ -316,9 +316,9 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     if((xi-600.0)*(xi-600.0)+yi*yi<1e-3) us_update=u_star;
 
     // Store results in particle
-    P1[i].float1 = u_star;
-    P1[i].float2 = theta_star;
-    P1[i].float3 = OB_length;
+    // P1[i].float1 = u_star;
+    // P1[i].float2 = theta_star;
+    // P1[i].float3 = OB_length;
 }
 
 __global__ void KERNEL_turbulent_viscosity3D(int_t*g_str, int_t*g_end, part1*P1, part3*P3, int_t tcount, Real tdt) {
@@ -367,7 +367,7 @@ __global__ void KERNEL_turbulent_viscosity3D(int_t*g_str, int_t*g_end, part1*P1,
 
               tdist=sqrt((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj))-1e-20;
               if(tdist<0.1){
-                u_star=P1[j].float1;
+                // u_star=P1[j].float1;
               }
             }
           }

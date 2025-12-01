@@ -59,8 +59,6 @@ typedef struct particles_array_1{
 	// Real fe_x,fe_y,fe_z;
 	// Real fb_x,fb_y,fb_z;
 
-	Real float1, float2, float3;
-
 	int_t ncell;
 	int_t source;
 
@@ -70,13 +68,13 @@ typedef struct particles_array_2{
 	Real rho_ref;
 
 	//// turbulence (by esk)
-	Real SR;																// strain rate (2S:S)
 
 	Real x0,y0,z0;													// Initial positions [m]
 	Real ux0,uy0,uz0;												// Initial velocity [m/s]
 	Real rho0;															// Initial density [kg/m3]
 	Real drho0;															// Error compensation: divergence error
 
+	Real SR;
 	Real temp0;
 
 	// psh: concentration diffusion
@@ -121,6 +119,8 @@ typedef struct LDM_particles_array_1{
 	uint_t buffer_type;											// buffer_type (0: active , 1: inlet, 2: outlet)
 	uint_t p_type;													// particle type: FLUID or BOUNDARY
 	uint_t ct_boundary;												// const temperatrue particle index (const temp particle :1 / else : 0)
+
+	Real t_release;										// particle release time [s]				
 
 	Real x,y,z;															// (Predicted) positions [m] ( Predictor_Corrector : Predicted position / Euler : Real Position )
 	Real ux,uy,uz;													// (Predicted) velocity [m/s] ( Predictor_Corrector : Predicted velocity / Euler : Real Velocity )

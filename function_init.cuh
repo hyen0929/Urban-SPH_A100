@@ -561,6 +561,7 @@ int_t gpu_count_boundary_numbers(const char*FileName)
 #define inp_de  25
 #define inp_h0  26
 #define inp_m0  27
+#define inp_release_t 28
 ///////////////////////////////////////////////////////////////////////
 void read_input(part1*Pa1,char*INPUT)
 {
@@ -678,7 +679,7 @@ void read_input(part1*Pa1,char*INPUT)
 				//Pa3[nop].de_turb=atof(buffer);
 				break;
 			default:
-				printf("undefined variable name");
+				printf("undefined variable name: %d",lbl_var[j]);
 				break;
 			}
 		}
@@ -803,6 +804,9 @@ void read_input_LDM(L_part1*Pa1,char*INPUT)
 				break;
 			case inp_de:
 				//Pa3[nop].de_turb=atof(buffer);
+				break;
+			case inp_release_t:
+				Pa1[nop].t_release=atof(buffer);
 				break;
 			default:
 				printf("undefined variable name");

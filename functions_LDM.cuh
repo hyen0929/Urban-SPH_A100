@@ -15,12 +15,17 @@ __device__ Real GaussianRand(curandState *s, Real mu, Real stdv){
 
 __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real tend,L_part1*LP1) {
 
-	int_t j;
+	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	double ttend;
 	ttend = tend;
-	if (ttime<=ttend){
-		for(j=k_num_part_LDM*(ttime)/(ttend); j<k_num_part_LDM*(ttime+freq*tdt)/(ttend); j++){
-			LP1[j].i_type=1;
+	// if (ttime<=ttend){
+	// 	for(j=k_num_part_LDM*(ttime)/(ttend); j<k_num_part_LDM*(ttime+freq*tdt)/(ttend); j++){
+	// 		LP1[j].i_type=1;
+	// 	}
+	// }
+  if (ttime<=ttend){
+		if(ttime>LP1[i].t_release){
+			LP1[i].i_type=1;
 		}
 	}
 
@@ -634,9 +639,8 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	Real flt_si;
 	Real tmpp;
 	Real search_range,tmp_h,tmp_A;
-	Real pc=0.0;
 
-	tmp_h=LP1[i].h;
+	tmp_h=2.0*LP1[i].h;
 	tmp_A=calc_tmpA(tmp_h);
 	search_range=k_search_kappa*tmp_h;								// search range
 
@@ -659,7 +663,8 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
 
 	tmpp=0.0;
-	int_t ncell=LP1[i].ncell;
+	Real tmppp=0.0;
+	int_t ncell=2*LP1[i].ncell;
 	for(int_t z=-ncell;z<=ncell;z++){
 		for(int_t y=-ncell;y<=ncell;y++){
 			for(int_t x=-ncell;x<=ncell;x++){
@@ -677,19 +682,22 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 
 						tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
 						if(tdist<search_range){
-							Real twij,pj,mj,rhoj,ptype_j;
-							twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
-							mj=LP1[j].m;
-							rhoj=LP1[j].rho;
-
-							tmpp+=1;
+							if(LP1[i].p_type==LP1[j].p_type){   // same species concentration
+								Real twij,pj,mj,rhoj,ptype_j;
+								twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
+								mj=LP1[j].m;
+								rhoj=LP1[j].rho;
+								tmpp+=mj/rhoj*twij;
+								tmppp+=1;
+							}
 						}
 					}
 				}
 			}
 		}
 	}
-	LP1[i].concn=tmpp;	
+	LP1[i].concn=tmpp;
+	LP1[i].concentration=tmppp;	
 }
 
 __global__ void KERNEL_compute_vorticity3D(int_t*g_str,int_t*g_end,part1*P1,part3*P3){

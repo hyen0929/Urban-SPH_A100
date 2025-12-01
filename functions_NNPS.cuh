@@ -1,4 +1,3 @@
-
 //////////////////////////////////////////////////////////////////////////////
 // // Single building (Case H, n=10)
 // #define L1 	0   // min(x)+1.5*initial_particle_spacing
@@ -27,19 +26,19 @@
 // #define L_MOST_xmax 1990.0
 
 // Single building (Case HS, n=10, Scale up)
-#define L1 	0   // min(x)+1.5*initial_particle_spacing
-#define L2	3.5 // min(x)+3.5*initial_particle_spacing
-#define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-#define L4	2210 // max(x)+1.0*initial_particle_spacing
+// #define L1 	0   // min(x)+1.5*initial_particle_spacing
+// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
+// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-#define L_left -62.5// min(y)+3.5*initial_particle_spacing
-#define L_right 62.5 // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 121.0
+// #define L_left -62.5// min(y)+3.5*initial_particle_spacing
+// #define L_right 62.5 // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 121.0
 
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
-// // Single building (Case RS, n=10, Scale up)
+// // Multi block (Case RS, n=10, Scale up)
 // #define L1 	0   // min(x)+1.5*initial_particle_spacing
 // #define L2	3.5 // min(x)+3.5*initial_particle_spacing
 // #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
@@ -52,20 +51,112 @@
 // #define L_MOST_x0 0.0
 // #define L_MOST_xmax 1990.0
 
-//////////////////////////////////////////////////////////////////////////////
+// CaseC (dx=0.01m)
+// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
+// #define L2	0.035   // min(x)+3.5*initial_particle_spacing
+// #define L3	10   // max(x)-3.5*initial_particle_spacing
+// #define L4	100  // max(x)+1.0*initial_particle_spacing
 
+// #define L_left -1.46    // min(y)+3.5*initial_particle_spacing
+// #define L_right 1.46    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// CaseC (dx=0.0133333m)
+// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
+// #define L2	0.033333333   // min(x)+3.5*initial_particle_spacing
+// #define L3	10   // max(x)-3.5*initial_particle_spacing
+// #define L4	100  // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -1.46    // min(y)+3.5*initial_particle_spacing
+// #define L_right 1.46    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// Leipzig (dx=2.5m)
+#define L1 	-900.0   // min(x)+1.5*initial_particle_spacing
+#define L2	-817.5 // min(x)+3.5*initial_particle_spacing
+#define L3	2200 // max(x)-3.5*initial_particle_spacing
+#define L4	2210 // max(x)+1.0*initial_particle_spacing
+
+#define L_left -691.25    // min(y)+3.5*initial_particle_spacing
+#define L_right 691.25    // max(y)-3.5*initial_particle_spacing
+#define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+#define L_MOST_x0 0.0
+#define L_MOST_xmax 1990.0
+
+// CaseA_n16 (dx=0.01m)
+// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
+// #define L2	0.0125   // min(x)+3.5*initial_particle_spacing
+// #define L3	10   // max(x)-3.5*initial_particle_spacing
+// #define L4	100  // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -0.4275    // min(y)+3.5*initial_particle_spacing
+// #define L_right 0.4275    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+//////////////////////////////////////////////////////////////////////////////
 
 __host__ float hash_random(int i, int seed) {
     uint32_t x = i * 73856093 ^ seed;
     x = (x >> 13) ^ x;
     return ((x * (x * x * 15731 + 789221) + 1376312589) & 0x7fffffff) / 2147483647.0f;
 }
+\
 
 __host__ float box_muller(int i, int seed_a, int seed_b) {
     float u1 = hash_random(i, seed_a);
     float u2 = hash_random(i, seed_b);
 
     return sqrtf(-2.0f * logf(u1 + 1e-6f)) * cosf(2 * M_PI * u2);
+}
+
+double Interpolate_ux_caseC(Real z_inp, Real scale){
+  Real z_scale=scale;             // (Building height / 0.08)
+  Real z=z_scale*z_inp;
+  Real u_scale=1.0;
+  static const double z_data[] = {
+        0.01, 0.02, 0.03, 0.05, 0.07,
+		0.1, 0.15, 0.2, 0.25, 0.3,
+		0.35, 0.4, 0.6, 0.8, 1.0, 1.2
+    };
+    static const double u_data[] = {
+        2.372, 2.434, 2.548, 2.912, 3.042,
+		3.392, 3.483, 3.654, 3.82, 4.019,
+		4.205, 4.343, 4.985, 5.713, 6.12, 6.201
+    };
+    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
+
+    // 아래/위 한 점으로 외삽
+    if (z <= z_data[0]) {
+        double dz = z_data[1] - z_data[0];
+        double du = u_data[1] - u_data[0];
+        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
+    }
+    if (z >= z_data[N-1]) {
+        double dz = z_data[N-1] - z_data[N-2];
+        double du = u_data[N-1] - u_data[N-2];
+        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
+    }
+
+    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
+    const double* it = std::lower_bound(z_data, z_data + N, z);
+    std::size_t i = static_cast<std::size_t>(it - z_data);
+    // 안전장치 (이론상 도달 X)
+    if (i == 0) i = 1;
+
+    double z0 = z_data[i-1], z1 = z_data[i];
+    double u0 = u_data[i-1], u1 = u_data[i];
+    double t  = (z - z0) / (z1 - z0);       // 0~1
+    return u_scale*((1.0 - t) * u0 + t * u1);         // 선형 보간
 }
 
 double Interpolate_ux_caseH(Real z_inp, Real scale){
@@ -207,21 +298,45 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 	int_t i,c_count;
 	Real xi0;
 	Real maxb,minb;
-
 	c_count=0;
 
 	for(i=0;i<num_part;i++){
+
+		Real xi, yi, zi;
+
+		xi=HP1[i].x;
+		yi=HP1[i].y;
+		zi=HP1[i].z;
+
 		HP1[i].i_type=1;
 		HP1[i].buffer_type=0;
+
 		// HP1[i].h=1.5;
 		// HP1[i].h_ref=HP1[i].h;
 		HP1[i].m_ref=HP1[i].m;
 		HP1[i].uy=0.0;
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
-    	Real scale_factor=0.16/20.0;       // 0.16(Experiment) / Building height
+    	Real scale_factor=0.05;       // 0.16(Experiment) / Building height
     	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
-    	HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
+		//HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
+
+		// // Inner building particle ux=0.0
+		// if(HP1[i].p_type==1 && zi<0.2){
+		// 	if(xi>1.0 && xi<1.2 && yi>-0.5 && yi<-0.3) HP1[i].ux=0.0;
+		// 	else if(xi>1.4 && xi<1.6 && yi>-0.5 && yi<-0.3) HP1[i].ux=0.0;
+		// 	else if(xi>1.8 && xi<2.0 && yi>-0.5 && yi<-0.3) HP1[i].ux=0.0;
+		// 	else if(xi>1.0 && xi<1.2 && yi>-0.1 && yi<0.1) HP1[i].ux=0.0;
+		// 	else if(xi>1.4 && xi<1.6 && yi>-0.1 && yi<0.1) HP1[i].ux=0.0;
+		// 	else if(xi>1.8 && xi<2.0 && yi>-0.1 && yi<0.1) HP1[i].ux=0.0;
+		// 	else if(xi>1.0 && xi<1.2 && yi>0.3 && yi<0.5) HP1[i].ux=0.0;
+		// 	else if(xi>1.4 && xi<1.6 && yi>0.3 && yi<0.5) HP1[i].ux=0.0;
+		// 	else if(xi>1.8 && xi<2.0 && yi>0.3 && yi<0.5) HP1[i].ux=0.0;
+		// }
+		// else if(HP1[i].p_type==1 && zi<0.4){
+		// 	if(xi>1.4 && xi<1.6 && yi>-0.1 && yi<0.1) HP1[i].ux=0.0;
+		// }
+    	
     
 		// if((HP1[i].x-765.0)*(HP1[i].x-765.0)+(HP1[i].y-0.0)*(HP1[i].y-0.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
     	// else if((HP1[i].x-425.0)*(HP1[i].x-425.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
@@ -446,8 +561,7 @@ void c_initial_inner_outer_particle_single_LDM(L_part1*HLP1,L_part1*DHLP1,int_t 
 		HLP1[i].uy=0.0;
 		HLP1[i].uz=0.0;
 
-		HLP1[i].ncell=ncell_init;
-    	
+		HLP1[i].ncell=ncell_init;    	
 		DHLP1[c_count]=HLP1[i];
 		c_count++;
 	}
@@ -517,7 +631,7 @@ void c_initial_inner_outer_particle(part1*HP1,part1*DHP1,int_t tid){
 				c_count++;
 			}
 		}
-	}else{	// 그 밖의 GPU에 대해서
+	}else{	    // 그 밖의 GPU에 대해서
 		c_count=0;
 		for(i=0;i<num_part;i++){
 			xi0=HP1[i].x;

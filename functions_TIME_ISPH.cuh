@@ -268,9 +268,6 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	TP1[i].hmz = P1[i].hmz;
 
 	// Store results in particle
-	TP1[i].float1 = P1[i].float1;
-	TP1[i].float2 = P1[i].float2;
-	TP1[i].float3 = P1[i].float3;
 
 	TP1[i].concentration=P1[i].concentration;
 
