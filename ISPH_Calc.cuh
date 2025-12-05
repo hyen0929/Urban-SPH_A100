@@ -5,7 +5,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	int_t*g_idx_LDM,int_t*p_idx_LDM,int_t*g_idx_in_LDM,int_t*p_idx_in_LDM,int_t*g_str_LDM,int_t*g_end_LDM,
 	int_t*b_idx,int_t*b_idx_in,int_t*b_str,int_t*b_end,
 	part1*dev_P1,part1*dev_SP1,part2*dev_P2,part2*dev_SP2,part3*dev_P3,
-	L_part1*dev_LP1,L_part1*dev_SLP1,L_part2*dev_LP2,L_part2*dev_SLP2,L_part3*dev_LP3,
+	L_part1*dev_LP1,L_part1*dev_SLP1,L_part2*dev_LP2,L_part2*dev_SLP2,
 	int_t*p2p_af_in,int_t*p2p_idx_in,int_t*p2p_af,int_t*p2p_idx,
 	void*dev_sort_storage,size_t*sort_storage_bytes,
 	void*dev_sort_storage_LDM,size_t*sort_storage_bytes_LDM,
@@ -71,8 +71,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		pthread_barrier_wait(&barrier);
 		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
-		cudaMemset(dev_LP3,0.0,sizeof(L_part3)*num_part_LDM);
-		pthread_barrier_wait(&barrier);
 		
 	}
 
@@ -95,9 +93,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		KERNEL_reorder_LDM<<<b,t,s>>>(g_idx_LDM,p_idx_LDM,g_str_LDM,g_end_LDM,dev_LP1,dev_LP2,dev_SLP1,dev_SLP2);
 		cudaDeviceSynchronize();
 
-		// 일부 입자정보 리셋
-		cudaMemset(dev_LP3,0.0,sizeof(L_part3)*num_part_LDM);
-
 		// 입자정보를 P1 에 복사
 		cudaMemcpy(dev_LP1,dev_SLP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
@@ -106,7 +101,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 // 계산 준비: gradient correction, filter, reference density, p_type switch, penetration, density gradient
 //-------------------------------------------------------------------------------------------------
-	if(time<10){
+	
 	b.x=(num_part2-1)/t.x+1;
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
 	if(count==0){
@@ -253,7 +248,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 	KERNEL_compute_vorticity3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 	cudaDeviceSynchronize();
-}
+
 
 //-------------------------------------------------------------------------------------------------
 // LDM coupling
@@ -265,7 +260,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
 		if(time_type==Pre_Cor){
 			b.x=(num_part_LDM-1)/t.x+1;
-			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2,dev_LP3);
+			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2);
 			cudaDeviceSynchronize();
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
@@ -352,13 +347,9 @@ void*ISPH_Calc(void*arg){
 	memset(file_LP1,0,sizeof(L_part1)*num_part_LDM);
 
 	L_part2*file_LP2;
-	L_part3*file_LP3;
 
 	file_LP2=(L_part2*)malloc(sizeof(L_part2)*num_part_LDM);
 	memset(file_LP2,0,sizeof(L_part2)*num_part_LDM);
-
-	file_LP3=(L_part3*)malloc(sizeof(L_part3)*num_part_LDM);
-	memset(file_LP3,0,sizeof(L_part3)*num_part_LDM);
 
 	//-------------------------------------------------------------------------------------------------
 	// Device/GPU 변수 선언 및 메모리 할당
@@ -379,7 +370,6 @@ void*ISPH_Calc(void*arg){
 	// 주요 LDM 변수
 	L_part1*dev_LP1,*dev_SLP1;
 	L_part2*dev_LP2,*dev_SLP2;
-	L_part3*dev_SLP3;
 
 	// P2P 데이터 변수 선언
 	int*p2p_af_in,*p2p_idx_in,*p2p_af,*p2p_idx;
@@ -441,7 +431,6 @@ void*ISPH_Calc(void*arg){
 	cudaMalloc((void**)&dev_SLP1,sizeof(L_part1)*num_part_LDM);
 	cudaMalloc((void**)&dev_LP2,sizeof(L_part2)*num_part_LDM);
 	cudaMalloc((void**)&dev_SLP2,sizeof(L_part2)*num_part_LDM);
-	cudaMalloc((void**)&dev_SLP3,sizeof(L_part3)*num_part_LDM);
 
 	// NNPS 메모리 초기화
 	cudaMemset(g_idx_in,0,sizeof(int_t)*num_part2);
@@ -470,7 +459,6 @@ void*ISPH_Calc(void*arg){
 	cudaMemset(dev_SLP1,0,sizeof(L_part1)*num_part_LDM);
 	cudaMemset(dev_LP2,0,sizeof(L_part2)*num_part_LDM);
 	cudaMemset(dev_SLP2,0,sizeof(L_part2)*num_part_LDM);
-	cudaMemset(dev_SLP3,0,sizeof(L_part3)*num_part_LDM);
 
 	//-------------------------------------------------------------------------------------------------
 	// Device/GPU로 데이터 복사
@@ -613,7 +601,7 @@ void*ISPH_Calc(void*arg){
 
 		if(ngpu==1){
 		SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,g_idx_LDM,p_idx_LDM,g_idx_in_LDM,p_idx_in_LDM,g_str_LDM,g_end_LDM,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
-					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,dev_SLP3,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,dev_sort_storage_LDM,&sort_storage_bytes_LDM,file_P1,file_P2,file_P3,file_LP1,tid);
+					dev_LP1,dev_SLP1,dev_LP2,dev_SLP2,p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,dev_sort_storage_LDM,&sort_storage_bytes_LDM,file_P1,file_P2,file_P3,file_LP1,tid);
 		//SOPHIA_single_ISPH(g_idx,p_idx,g_idx_in,p_idx_in,g_str,g_end,b_idx,b_idx_in,b_str,b_end,dev_P1,dev_SP1,dev_P2,dev_SP2,dev_SP3,
 		//			p2p_af_in,p2p_idx_in,p2p_af,p2p_idx,dev_sort_storage,&sort_storage_bytes,file_P1,file_P2,file_P3,tid);
 		}
@@ -700,7 +688,6 @@ void*ISPH_Calc(void*arg){
 	cudaFree(dev_SLP1);
 	cudaFree(dev_LP2);
 	cudaFree(dev_SLP2);
-	cudaFree(dev_SLP3);
 	cudaFree(max_umag);
 	cudaFree(max_rho);
 	cudaFree(max_ft);

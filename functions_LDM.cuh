@@ -31,7 +31,7 @@ __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real 
 
 }
 
-__global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,L_part2*LP2,L_part3*LP3)
+__global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,L_part2*LP2)
 {
 	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
 
@@ -41,8 +41,6 @@ __global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,
 
 	int_t p_typei;
 	double tmp;
-
-	int_t buffer_type=LP1[i].buffer_type;
 
 	p_typei=LP1[i].p_type;
 
@@ -283,7 +281,6 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, L_
 	Real mu = 0.0;
 	Real stdv = 1;
 
-	int_t buffer_type=LP1[i].buffer_type;
 	int_t p_type_i=LP1[i].p_type;
 
 	// Real Ru = 0;
@@ -387,13 +384,13 @@ __global__ void KERNEL_time_update_CFD_3D(const Real tdt, Real tt, Real tend, L_
 	LP1[i].uy=uyc;														// update y-directional velocity
 	LP1[i].uz=uzc;														// update z-directional velocity
 
-	LP1[i].uxr=uxc+xwind;
-	LP1[i].uyr=uyc+ywind;
-	LP1[i].uzr=uzc+zwind;
+	// LP1[i].uxr=uxc+xwind;
+	// LP1[i].uyr=uyc+ywind;
+	// LP1[i].uzr=uzc+zwind;
 
-	LP1[i].xwind = xwind;
-	LP1[i].ywind = ywind;
-	LP1[i].zwind = zwind;
+	// LP1[i].xwind = xwind;
+	// LP1[i].ywind = ywind;
+	// LP1[i].zwind = zwind;
 	LP1[i].k_turb = k_turb;
 	LP1[i].e_turb = e_turb;
 	LP1[i].yplus = yplus;
@@ -543,6 +540,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 		zwind=0;
 		k_turb=1e-10;
 		e_turb=1e-10;
+		printf("No neighbor particles found for LDM particle %d at (%f, %f, %f)\n", i, xi, yi, zi);
 	}
 	else{
 		// Normalize by total weight
@@ -577,7 +575,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	Real mu = 0.0;
 	Real stdv = 1;
 
-	int_t buffer_type=LP1[i].buffer_type;
 	int_t p_type_i=LP1[i].p_type;
 
 	Real drift_u = (Real)0.0;
@@ -612,13 +609,13 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	LP1[i].uy=uyc;														// update y-directional velocity
 	LP1[i].uz=uzc;														// update z-directional velocity
 
-	LP1[i].uxr=uxc+xwind;
-	LP1[i].uyr=uyc+ywind;
-	LP1[i].uzr=uzc+zwind;
+	// LP1[i].uxr=uxc+xwind;
+	// LP1[i].uyr=uyc+ywind;
+	// LP1[i].uzr=uzc+zwind;
 
-	LP1[i].xwind = xwind;
-	LP1[i].ywind = ywind;
-	LP1[i].zwind = zwind;
+	// LP1[i].xwind = xwind;
+	// LP1[i].ywind = ywind;
+	// LP1[i].zwind = zwind;
 	LP1[i].k_turb = k_turb;
 	LP1[i].e_turb = e_turb;
 	LP1[i].yplus = yplus;
@@ -636,7 +633,7 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi;
 	Real pi;														// pressure
-	Real flt_si;
+	//Real flt_si;
 	Real tmpp;
 	Real search_range,tmp_h,tmp_A;
 
@@ -649,8 +646,6 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	xi=LP1[i].x;
 	yi=LP1[i].y;
 	zi=LP1[i].z;
-
-	flt_si=LP1[i].flt_s;
 
 	// calculate I,J,K in cell
 	if((k_x_max==k_x_min)){icell=0;}

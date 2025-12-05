@@ -553,7 +553,6 @@ void c_initial_inner_outer_particle_single_LDM(L_part1*HLP1,L_part1*DHLP1,int_t 
 
 	for(i=0;i<num_part_LDM;i++){
 		HLP1[i].i_type=3;
-		HLP1[i].buffer_type=0;
 		// HP1[i].h=1.5;
 		// HP1[i].h_ref=HP1[i].h;
 		HLP1[i].m_ref=HLP1[i].m;

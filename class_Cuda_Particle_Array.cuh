@@ -116,9 +116,7 @@ typedef struct p2p_particles_array_3{
 
 typedef struct LDM_particles_array_1{
 	int_t i_type;													// Inner or Outer
-	uint_t buffer_type;											// buffer_type (0: active , 1: inlet, 2: outlet)
 	uint_t p_type;													// particle type: FLUID or BOUNDARY
-	uint_t ct_boundary;												// const temperatrue particle index (const temp particle :1 / else : 0)
 
 	Real t_release;										// particle release time [s]				
 
@@ -128,25 +126,13 @@ typedef struct LDM_particles_array_1{
 	Real m_ref;
 	Real h;																	// kernel distance
 	Real h_ref;
-	Real temp;															// temperature [K]
-	Real pres;															// pressure [Pa]
-	//Real pres_ave;													// averaged pressure
 	Real rho;																// density [kg/m3]	( Predictor_Corrector : Predicted density / Euler : Real density )
-
-	Real flt_s;															// Shepard filter
-	Real w_dx;															// w(dx) for particle shifting
-	Real enthalpy;
 	Real concn;
 	Real sigma;
-
-	Real grad_rhox,grad_rhoy,grad_rhoz;				// density gradient - only mass kernel using
-
 	// turbulence (by esk)
 	Real k_turb, e_turb;												// turbulence kinetic energy,dissipation rate --> check unit
-	Real fx_cylinder, fy_cylinder;
 
-	Real uxr, uyr, uzr;
-	Real xwind, ywind, zwind;
+	// Real xwind, ywind, zwind;
 	Real kver, khor;
 	Real sigu, sigv, sigw, dsigw;
 	Real disp_rho, disp_drho;
@@ -163,21 +149,10 @@ typedef struct LDM_particles_array_1{
 }L_part1;
 ////////////////////////////////////////////////////////////////////////
 typedef struct LDM_particles_array_2{
-	Real rho_ref;
-
-	//// turbulence (by esk)
-	Real SR;																	// strain rate (2S:S)
-
 	Real x0,y0,z0;													// Initial positions [m]
 	Real ux0,uy0,uz0;												// Initial velocity [m/s]
-	Real rho0;															// Initial density [kg/m3]
-	Real drho0;														// Error compensation: divergence error
+	Real rho0;															// Initial density [kg/m3]												// Error compensation: divergence error
 	Real sigma0;
-	// psh: concentration diffusion
-	Real concn0;														// concentration
-	Real enthalpy0;													// enthalpy [J/kg]
-
-	Real uxr0,uyr0,uzr0;
 }L_part2;
 ////////////////////////////////////////////////////////////////////////
 typedef struct LDM_particles_array_3{

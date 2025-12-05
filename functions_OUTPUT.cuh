@@ -1205,18 +1205,6 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
-		// flt_s
-		if (!strncmp(data_label,"flt_s",3)) {
-			fprintf(outFile_vtk,"flt_s\t1\t%d\tfloat\n",Nparticle);
-			for(i=0;i<nop;i++){
-				//if(LP1[i].x>0){
-				// if((LP1[i].p_type==2)|(LP1[i].p_type==9)){
-				if(plot_flag[i]==1){
-					val=FloatSwap(LP1[i].flt_s);
-					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
-				}
-			}
-		}
 		// concn
 		if (!strncmp(data_label,"concn",5)) {
 			fprintf(outFile_vtk,"concn\t1\t%d\tfloat\n",Nparticle);

@@ -679,7 +679,7 @@ void read_input(part1*Pa1,char*INPUT)
 				//Pa3[nop].de_turb=atof(buffer);
 				break;
 			default:
-				printf("undefined variable name: %d",lbl_var[j]);
+				printf("undefined variable name: %d\n",lbl_var[j]);
 				break;
 			}
 		}
@@ -760,12 +760,6 @@ void read_input_LDM(L_part1*Pa1,char*INPUT)
 			case inp_m0:
 				Pa1[nop].m_ref=atof(buffer);
 				break;
-			case inp_temp:
-				Pa1[nop].temp=atof(buffer);
-				break;
-			case inp_pres:
-				Pa1[nop].pres=atof(buffer);
-				break;
 			case inp_rho:
 				Pa1[nop].rho=atof(buffer);
 				//Pa2[nop].rho0=atof(buffer);
@@ -809,7 +803,7 @@ void read_input_LDM(L_part1*Pa1,char*INPUT)
 				Pa1[nop].t_release=atof(buffer);
 				break;
 			default:
-				printf("undefined variable name");
+				printf("undefined variable name: %d\n",lbl_var[j]);
 				break;
 			}
 		}
