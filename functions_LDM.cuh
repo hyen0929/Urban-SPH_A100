@@ -515,7 +515,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 							tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 
 							if(tdist<search_range){
-								//if(i==135235) P1[j].PPE2=1.0;
 								
 								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
 								
