@@ -108,6 +108,8 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 		cudaDeviceSynchronize();
 	}
+	gradient_correction(g_str,g_end,dev_SP1,dev_P3);
+	cudaDeviceSynchronize();
 	KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
 	cudaDeviceSynchronize();
 
@@ -170,8 +172,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	for(int_t it=0;it<=0;it++){   // For iterative(implicit) pressure solver
 		// PPE.cuh
 		b.x=(num_part2-1)/t.x+1;
-		KERNEL_PPE3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		// KERNEL_pressure_synchronize<<<b,t>>>(dev_SP1,dev_P1);
+		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		cudaDeviceSynchronize();
+		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
 		cudaDeviceSynchronize();
 
 		// Pressure condition for wall(Neumann boundary)
@@ -200,28 +203,31 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	}
 
 //-------------------------------------------------------------------------------------------------
-// Immersed Boundary Method (IBM)
-//-------------------------------------------------------------------------------------------------
-	// IBM force interpolation (fb for IB)
-	b.x=(num_part2-1)/t.x+1;
-	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-	// IBM spreading interpolation (fb for fluid)
-	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-//-------------------------------------------------------------------------------------------------
 // 시간 적분 (Time Integration)
 //-------------------------------------------------------------------------------------------------
 	b.x=(num_part2-1)/t.x+1;
 	KERNEL_time_update_projection<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	cudaDeviceSynchronize();
 
+//-------------------------------------------------------------------------------------------------
+// Immersed Boundary Method (IBM)
+//-------------------------------------------------------------------------------------------------
+	// IBM force interpolation (fb for IB)
+	b.x=(num_part2-1)/t.x+1;
+	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
+
+	// IBM spreading interpolation (fb for fluid)
+	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
+
 	// KERNEL_time_update_buffer<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	// cudaDeviceSynchronize();
 
 	IBM_corrector<<<b,t>>>(dt_structure,time,dev_SP1,dev_P1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
+
+	IBM_corrector_fluid<<<b,t>>>(dt,time,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
 	// b.x=(num_part2-1)/t.x+1;
@@ -279,12 +285,14 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P1,dev_P1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
+		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
+
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
-		if(count%2000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
+		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
+		
+		save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
 		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
-
-		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);
 
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);

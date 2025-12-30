@@ -43,8 +43,8 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 	char INPUT_FILE_NAME[128];
 	char INPUT_FILE_NAME2[128];
-	strcpy(INPUT_FILE_NAME,"./input/Leipzig.txt");       // input file name and address(SPH)
-	strcpy(INPUT_FILE_NAME2,"./input/Leipzig_LDM.txt");	   // input file name and address(LDM)					
+	strcpy(INPUT_FILE_NAME,"./input/Leipzig_small_point.txt");       // input file name and address(SPH)
+	strcpy(INPUT_FILE_NAME2,"./input/Leipzig_small_point_LDM.txt");	   // input file name and address(LDM)					
 
 	// char MARKER_INPUT_FILE_NAME[128];
 	// strcpy(MARKER_INPUT_FILE_NAME,"./input/marker.txt");

@@ -539,7 +539,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 		zwind=0;
 		k_turb=1e-10;
 		e_turb=1e-10;
-		printf("No neighbor particles found for LDM particle %d at (%f, %f, %f)\n", i, xi, yi, zi);
 	}
 	else{
 		// Normalize by total weight

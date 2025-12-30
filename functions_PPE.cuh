@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////
-__global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
+__global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i>=k_num_part2) return;
@@ -106,9 +106,13 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 									Real tdwz=tdwij*(zi-zj)/tdist;
 
 									Real tdwxc, tdwyc, tdwzc;      // gradient correction
-									tdwxc=gc11*tdwx+gc12*tdwy+gc31*tdwz;
-									tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
-									tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
+									// tdwxc=gc11*tdwx+gc12*tdwy+gc31*tdwz;
+									// tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
+									// tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
+
+									tdwxc=tdwx;
+									tdwyc=tdwy;
+									tdwzc=tdwz;      // No correction test(251219)
 
 									// Real hij=0.5*(hi+hj);
 									// Real tmp_Aij=calc_tmpA(hij);
@@ -144,7 +148,7 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 									Real c = 2.0*mj/rhoj*((xi-xj)*tdwxc+(yi-yj)*tdwyc+(zi-zj)*tdwzc)/tdist/tdist;    // gradient correction
 
 									Aij += c;
-									AijPij += c*(presj-P1[j].pres0);
+									AijPij += c*presj;
 								}
 							}
 						}
@@ -156,14 +160,15 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 	Real weight=1.0;
 	//if(P1[i].buffer_type==-1||P1[i].buffer_type==1) weight=0.05*xi;
 
-	bi = weight*(bix+biy+biz+divFb)/tdt;
+	bi = weight*(bix+biy+biz)/tdt;
 
 	// bi = -rhoi*(1.0-drhostar/flt)/tdt/tdt;
 	//P1[i].PPE1 = rhoi*(bix+biy+biz)/tdt;
 	//P1[i].PPE2 = -rhoi*(1.0-drhostar/flt)/tdt/tdt;  // YHS
 
-	//P1[i].PPE1 = unity;
-	P1[i].pres=P1[i].pres0+(bi+AijPij)/Aij;
+	P1[i].PPE1 = bi+AijPij;
+	P1[i].PPE2 = Aij;
+ 	//P1[i].pres=(bi+AijPij)/Aij;
 	//if(xi>4.5 && xi<15.5 && yi>4 && yi<6 && zi>7 && zi<8) printf("xi=%f bix=%f biy=%f biz=%f Aij=%f AijPij=%f\n",xi,bix,biy,biz,Aij,AijPij);
 
 	//if(isnan(P1[i].pres)==1) printf("xi=%f bi=%f bix=%f biy=%f biz=%f Aij=%f AijPij=%f\n",xi,bi,bix,biy,biz,Aij,AijPij);
@@ -172,6 +177,17 @@ __global__ void KERNEL_PPE3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2
 	// P1[i].fv_y=Aij;
 	// P1[i].fv_z=AijPij;
 
+}
+
+__global__ void KERNEL_PPE_calc3D(part1*P1)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].i_type>i_type_crt) return;
+	if(P1[i].p_type>=1000)	return;		// Immersed Boundary Method
+	if(P1[i].p_type<=0)	return;
+
+	P1[i].pres=(P1[i].PPE1)/(P1[i].PPE2+1e-20);
 }
 
 __global__ void KERNEL_pressure_synchronize(part1*P1,part1*TP1)
@@ -271,6 +287,12 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	Real soundspeed=30.0;
 	Real Turb_dT=0.0;
 
+	Real wx=0.0, wy=0.0, wz=0.0;
+
+	Real a_conv_x = 0.0;
+	Real a_conv_y = 0.0;
+	Real a_conv_z = 0.0;
+
 	int_t ncell=P1[i].ncell;
 
 	for(int_t z=-ncell;z<=ncell;z++){
@@ -298,7 +320,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 							if(tdist<search_range){
 								int_t ptypej;
 								Real tdwx,tdwy,tdwz,uxj,uyj,uzj,mj,tempj,rhoj,kcj,sum_con_H,diffj,concnj,tmprd,tmprd1,tmprd2;
-
+								
 								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
 								Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
 
@@ -322,6 +344,10 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 								tempj=P1[j].temp;
 								rhoj=P1[j].rho;
 								hj=P1[j].h;
+
+								Real dvx = uxj-uxi;
+								Real dvy = uyj-uyi;
+								Real dvz = uzj-uzi;
 
 								if(k_fv_solve==Cleary){
 									Real visj,C_v;
@@ -370,6 +396,10 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 
 								}
 								if(P1[i].eli<1.0){
+
+									wx += (mj/rhoj) * (dvy*tdwz - dvz*tdwy);
+    								wy += (mj/rhoj) * (dvz*tdwx - dvx*tdwz);
+    								wz += (mj/rhoj) * (dvx*tdwy - dvy*tdwx);
 
 									eulerx += (uxi*(uxj-uxi)*tdwx+uyi*(uxj-uxi)*tdwy+uzi*(uxj-uxi)*tdwz)*mj/rhoj*(1-P1[i].eli);
 									eulery += (uxi*(uyj-uyi)*tdwx+uyi*(uyj-uyi)*tdwy+uzi*(uyj-uyi)*tdwz)*mj/rhoj*(1-P1[i].eli);
@@ -449,13 +479,21 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	P3[i].ftotaly=tmpy-eulery;
 	P3[i].ftotalz=tmpz-eulerz;
 
-	// P1[i].fe_x=-eulerx;
-	// P1[i].fe_y=-eulery;
-	// P1[i].fe_z=-eulerz;
-	//
-	// P1[i].fv_x=fvx;
-	// P1[i].fv_y=fvy;
-	// P1[i].fv_z=fvz;
+	// a_conv_x = uyi*wz - uzi*wy;
+	// a_conv_y = uzi*wx - uxi*wz;
+	// a_conv_z = uxi*wy - uyi*wx;
+
+	// P3[i].ftotalx=tmpx + a_conv_x;
+	// P3[i].ftotaly=tmpy + a_conv_y;
+	// P3[i].ftotalz=tmpz + a_conv_z;
+
+	P1[i].fe_x=-eulerx;
+	P1[i].fe_y=-eulery;
+	P1[i].fe_z=-eulerz;
+	
+	P1[i].fv_x=fvx;
+	P1[i].fv_y=fvy;
+	P1[i].fv_z=fvz;
 
 	if(k_con_solve){
 		//if (enthalpy_eqn) P3[i].denthalpy=tmp_Rc*(ptypei!=-1);
@@ -501,7 +539,7 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 	yi=P1[i].y;
 	zi=P1[i].z;
 	hi=P1[i].h;
-	pi=P1[i].pres-P1[i].pres0;
+	pi=P1[i].pres;
 	rhoi=P1[i].rho;
 	ptypei=P1[i].p_type;
 
@@ -611,19 +649,20 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 
 								mj=P1[j].m;
 								rhoj=P1[j].rho;
-								pj=P1[j].pres-P1[j].pres0;
+								pj=P1[j].pres;
 
 								if(k_fp_solve){
 
 									// p_stab 계산  (for pressure stabilization)
-	               	// Real p_stab=min((pj_max-pj_min)/2,pi)-0.0;
+	               					// Real p_stab=min((pj_max-pj_min)/2,pi)-0.0;
 									//Real p_stab=min((pj_max-pj_min)/2,pi_sum/flt_pi);
 
-                	// **C_p 계산 및 힘 적용**
+                					// **C_p 계산 및 힘 적용**
 									// Real C_p=-mj/(rhoi*rhoj)*(pi*rhoj+pj*rhoi)/(rhoi+rhoj);   // two phase
 									// Real C_p=-mj*(pi+pj)/(rhoi*rhoj);      // Standard Monaghan
-									Real C_p=-2.0*mj/(rhoi*rhoj)*((pi+Pb)*rhoj+(pj+Pb)*rhoi)/(rhoi+rhoj);      // Monaghan variation
-                	// Real C_p=-mj*(pj-pi)/(rhoi*rhoj)-mj*(2.0*p_stab)/(rhoi*rhoj)*(ptypei==ptypej);     // Pressure stabilization(KDH)
+									// Real C_p=-2.0*mj/(rhoi*rhoj)*((pi+Pb)*rhoj+(pj+Pb)*rhoi)/(rhoi+rhoj);      // Monaghan variation
+                					// Real C_p=-mj*(pj-pi)/(rhoi*rhoj)-mj*(2.0*p_stab)/(rhoi*rhoj)*(ptypei==ptypej);     // Pressure stabilization(KDH)
+									Real C_p=-2.0*mj/(rhoi*rhoj)*(pi*rhoj+pj*rhoi)/(rhoi+rhoj);      // Origianl (KDH, 251226)
 									tmpx+=C_p*tdwx;
 									tmpy+=C_p*tdwy;
 									tmpz+=C_p*tdwz;
@@ -635,9 +674,9 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 			}
 		}
 	}
-	// P1[i].fp_x=tmpx;
-	// P1[i].fp_y=tmpy;
-	// P1[i].fp_z=tmpz;
+	P1[i].fp_x=tmpx;
+	P1[i].fp_y=tmpy;
+	P1[i].fp_z=tmpz;
 
 	P3[i].fpx=tmpx;
 	P3[i].fpy=tmpy;

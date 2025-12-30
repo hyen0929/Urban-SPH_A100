@@ -21,6 +21,7 @@ typedef struct particles_array_1{
 	Real temp;														// temperature [K]
 	Real pres;														// pressure [Pa]
 	Real pres0;
+	Real pres_temp;
 	Real rho;														// density [kg/m3]	( Predictor_Corrector : Predicted density / Euler : Real density )
 	Real flt_s;														// Shepard filter
 	Real enthalpy;
@@ -52,11 +53,11 @@ typedef struct particles_array_1{
 	// Real fpx, fpy, fpz;
 	Real fbx, fby, fbz;
 	Real fmx, fmy, hmz;
-	// Real PPE1, PPE2;
+	Real PPE1, PPE2;
 
-	// Real fp_x,fp_y,fp_z;
-	// Real fv_x,fv_y,fv_z;
-	// Real fe_x,fe_y,fe_z;
+	Real fp_x,fp_y,fp_z;
+	Real fv_x,fv_y,fv_z;
+	Real fe_x,fe_y,fe_z;
 	// Real fb_x,fb_y,fb_z;
 
 	int_t ncell;

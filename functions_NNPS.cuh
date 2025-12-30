@@ -78,14 +78,40 @@
 // #define L_MOST_xmax 1990.0
 
 // Leipzig (dx=2.5m)
-#define L1 	-900.0   // min(x)+1.5*initial_particle_spacing
-#define L2	-817.5 // min(x)+3.5*initial_particle_spacing
+// #define L1 	-900.0   // min(x)+1.5*initial_particle_spacing
+// #define L2	-817.5 // min(x)+3.5*initial_particle_spacing
+// #define L3	2200 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -691.25    // min(y)+3.5*initial_particle_spacing
+// #define L_right 691.25    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// // Leipzig (Point input, dx=2.5m)
+// #define L1 	0.0   // min(x)+1.5*initial_particle_spacing
+// #define L2	8.75 // min(x)+3.5*initial_particle_spacing
+// #define L3	2200 // max(x)-3.5*initial_particle_spacing
+// #define L4	2210 // max(x)+1.0*initial_particle_spacing
+
+// #define L_left -678.75    // min(y)+3.5*initial_particle_spacing
+// #define L_right 678.75    // max(y)-3.5*initial_particle_spacing
+// #define L_ceiling 15463.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+
+// #define L_MOST_x0 0.0
+// #define L_MOST_xmax 1990.0
+
+// Leipzig (Point input, dx=2.5m, small)
+#define L1 	0.0   // min(x)+1.5*initial_particle_spacing
+#define L2	8.75 // min(x)+3.5*initial_particle_spacing
 #define L3	2200 // max(x)-3.5*initial_particle_spacing
 #define L4	2210 // max(x)+1.0*initial_particle_spacing
 
-#define L_left -691.25    // min(y)+3.5*initial_particle_spacing
-#define L_right 691.25    // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
+#define L_left -248.75    // min(y)+3.5*initial_particle_spacing
+#define L_right 248.75    // max(y)-3.5*initial_particle_spacing
+#define L_ceiling 15463.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
 
 #define L_MOST_x0 0.0
 #define L_MOST_xmax 1990.0

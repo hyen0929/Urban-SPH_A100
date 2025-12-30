@@ -230,9 +230,17 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
   	// P1[i].uz_i = tmpuz/(filt+1e-10);
 
 	// the force applied to solid for no-slip condition
-	P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
-	P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
-  	P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+	if(filt<1e-3){
+		P1[i].fbx = 0.0;
+		P1[i].fby = 0.0;
+		P1[i].fbz = 0.0;
+	}
+	else{
+		const Real beta = 0.2;       // Relaxation factor
+		P1[i].fbx = beta * 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
+		P1[i].fby = beta * 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
+  		P1[i].fbz = beta * 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+	}
 	// {
 	// 	// 주변 유체 보간 속도
 	// 	Real ufx = tmpux/(filt+1e-10);
@@ -303,7 +311,6 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	rhoi=P1[i].rho;
 	tmp_h=IBM_length*P1[i].h;
 	tmp_A=calc_tmpA(tmp_h);
-	search_range=k_search_kappa*tmp_h;
 
 	//if(abs(xi-0.76)<1e-3 && abs(zi-0.156)<1e-3) return;      // for AIJ Case H
 	//if(abs(xi-95)<1e-3 && abs(zi-19.5)<1e-3) return;         // for AIJ Case HS
@@ -341,12 +348,16 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 
 						if(itype!=4){
 							if(P1[j].p_type==1000){
+								Real hj=IBM_length*P1[j].h;
+								Real Aj=calc_tmpA(hj);
+								search_range=k_search_kappa*hj;
+								
 
             					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
 									Real mj,tdwx,tdwy,uxj,uyj,uzj,rhoj,tmprho;
 									Real fb_xm, fb_ym, fb_zm;
-									Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
+									Real twij=calc_kernel_wij(Aj,hj,tdist);
 
 									p_type_j=P1[j].p_type;
 
@@ -387,8 +398,10 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
         return;
     }
 	// the force applied to fluid for no-slip condition
-	P1[i].fbx = fb_x/(filt+1e-10);
-	P1[i].fby = fb_y/(filt+1e-10);
+	Real alpha = 1.0;
+	if (filt>1.5) alpha = 1.5/filt;
+	P1[i].fbx = alpha*fb_x/(filt+1e-10);
+	P1[i].fby = alpha*fb_y/(filt+1e-10);
   	P1[i].fbz = fb_z/(filt+1e-10);
 	P1[i].concentration = filt;
 	//
@@ -506,5 +519,17 @@ __global__ void IBM_corrector(Real t_dt,Real ttime,part1*P1,part1*TP1,part2*P2,p
 
 	// TP1[i].jacob=P1[i].jacob;
 
+
+}
+
+__global__ void IBM_corrector_fluid(Real t_dt,Real ttime,part1*P1,part2*P2,part3*P3)
+{
+	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].p_type!=1) return;
+
+	P1[i].ux+=P1[i].fbx/P1[i].rho*t_dt;
+	P1[i].uy+=P1[i].fby/P1[i].rho*t_dt;
+	P1[i].uz+=P1[i].fbz/P1[i].rho*t_dt;
 
 }

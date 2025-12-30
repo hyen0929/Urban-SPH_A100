@@ -165,9 +165,13 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 			// duy_dt=P3[i].fpy*(buffer_type==0);			// y-directional acceleration
 			// duz_dt=P3[i].fpz*(buffer_type==0);			// z-directional acceleration
 
-			dux_dt=P3[i].fpx*(buffer_type==0)+P1[i].fbx/P1[i].rho+P1[i].fmx;			// x-directional acceleration
-			duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fby/P1[i].rho+P1[i].fmy;			// y-directional acceleration
-			duz_dt=P3[i].fpz*(buffer_type==0)+P1[i].fbz/P1[i].rho;			// z-directional acceleration
+			// dux_dt=P3[i].fpx*(buffer_type==0)+P1[i].fbx/P1[i].rho+P1[i].fmx;			// x-directional acceleration
+			// duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fby/P1[i].rho+P1[i].fmy;			// y-directional acceleration
+			// duz_dt=P3[i].fpz*(buffer_type==0)+P1[i].fbz/P1[i].rho;			// z-directional acceleration
+
+			dux_dt=P3[i].fpx*(buffer_type==0)+P1[i].fmx;			// x-directional acceleration
+			duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fmy;			// y-directional acceleration
+			duz_dt=P3[i].fpz*(buffer_type==0);			// z-directional acceleration
 		}else{
 			tux0=P2[i].ux0;
 			tuy0=P2[i].uy0;
@@ -222,6 +226,7 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	else TP1[i].concn=P1[i].concn;
 
 	TP1[i].pres=P1[i].pres;
+	TP1[i].pres0=P1[i].pres;
 	TP1[i].flt_s=P1[i].flt_s;
 	TP1[i].m=P1[i].m;
 	TP1[i].ncell=P1[i].ncell;
@@ -243,21 +248,21 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	// TP1[i].PPE1=P1[i].PPE1;
 	// TP1[i].PPE2=P1[i].PPE2;
 
-	// TP1[i].fp_x=P1[i].fp_x;
-	// TP1[i].fp_y=P1[i].fp_y;
-	// TP1[i].fp_z=P1[i].fp_z;
-	//
-	// TP1[i].fe_x=P1[i].fe_x;
-	// TP1[i].fe_y=P1[i].fe_y;
-	// TP1[i].fe_z=P1[i].fe_z;
-	//
-	// TP1[i].fv_x=P1[i].fv_x;
-	// TP1[i].fv_y=P1[i].fv_y;
-	// TP1[i].fv_z=P1[i].fv_z;
+	TP1[i].fp_x+=P1[i].fp_x;
+	TP1[i].fp_y+=P1[i].fp_y;
+	TP1[i].fp_z+=P1[i].fp_z;
+	
+	TP1[i].fe_x+=P1[i].fe_x;
+	TP1[i].fe_y+=P1[i].fe_y;
+	TP1[i].fe_z+=P1[i].fe_z;
+	
+	TP1[i].fv_x+=P1[i].fv_x;
+	TP1[i].fv_y+=P1[i].fv_y;
+	TP1[i].fv_z+=P1[i].fv_z;
 
-	TP1[i].fbx=P1[i].fbx;
-	TP1[i].fby=P1[i].fby;
-	TP1[i].fbz=P1[i].fbz;
+	TP1[i].fbx+=P1[i].fbx;
+	TP1[i].fby+=P1[i].fby;
+	TP1[i].fbz+=P1[i].fbz;
 
 	// TP1[i].fb_x=P1[i].fb_x;
 	// TP1[i].fb_y=P1[i].fb_y;

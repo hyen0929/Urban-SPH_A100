@@ -699,6 +699,7 @@ __global__ void KERNEL_periodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 	Real ux_if, uy_if, uz_if, pres_if;
 	Real tflt_s;
 	Real tpres, tdpres_x, tdpres_y, tdpres_z, dpres_x, dpres_y;
+	Real tempe, tempk;
 	hi=P1[i].h;
 	tmp_A=calc_tmpA(hi);
 	search_range=k_search_kappa*hi;	// search range
@@ -725,6 +726,7 @@ __global__ void KERNEL_periodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 
 	trho=tdrho_x=tdrho_y=0.0;
 	tux=tuy=tuz=0.0;
+	tempe=tempk=0.0;
 	tflt_s=ttemp=0.0;
 	tpres=tdpres_x=tdpres_y=tdpres_z=0.0;
 	ux_if=uy_if=uz_if=pres_if=0.0;
@@ -797,6 +799,8 @@ __global__ void KERNEL_periodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 							tuz=uzj;
 							tpres=presj;
 							ttemp=tempj;
+							tempk=P1[j].k_turb;
+							tempe=P1[j].e_turb;
 							flag=1;
 						}
 					}
@@ -821,6 +825,8 @@ __global__ void KERNEL_periodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 	P1[i].uz=tuz;
 	P1[i].pres=tpres;
 	P1[i].temp=ttemp;
+	P1[i].k_turb=tempk;
+	P1[i].e_turb=tempe;
 	P1[i].flt_s = P1[i].flt_s;
 	return;
 }
