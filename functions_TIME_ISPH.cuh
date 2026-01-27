@@ -100,11 +100,11 @@ __global__ void KERNEL_clc_projection(int_t tcount, Real tdt,Real ttime,part1*P1
 			}
 	}
 
-	if(k_concn_solve==1){
-		Real tconcn=P1[i].concn;
-		P2[i].concn0=tconcn;
-		P1[i].concn=tconcn+P3[i].dconcn*(t_dt);
-	}
+	// if(k_concn_solve==1){
+	// 	Real tconcn=P1[i].concn;
+	// 	P2[i].concn0=tconcn;
+	// 	P1[i].concn=tconcn+P3[i].dconcn*(t_dt);
+	// }
 
 	// if(isnan(P1[i].ux)) printf("ftotal=%f\n",P3[i].ftotalx);
 
@@ -219,11 +219,11 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	}
 
 	//update_properties_concn----------------------------------
-	if(k_concn_solve==1) {
-		TP1[i].concn=P2[i].concn0+P3[i].dconcn*t_dt;
-		if(TP1[i].concn<0.0) TP1[i].concn=0.0;
-	}
-	else TP1[i].concn=P1[i].concn;
+	// if(k_concn_solve==1) {
+	// 	TP1[i].concn=P2[i].concn0+P3[i].dconcn*t_dt;
+	// 	if(TP1[i].concn<0.0) TP1[i].concn=0.0;
+	// }
+	// else TP1[i].concn=P1[i].concn;
 
 	TP1[i].pres=P1[i].pres;
 	TP1[i].pres0=P1[i].pres;
@@ -248,21 +248,21 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	// TP1[i].PPE1=P1[i].PPE1;
 	// TP1[i].PPE2=P1[i].PPE2;
 
-	TP1[i].fp_x+=P1[i].fp_x;
-	TP1[i].fp_y+=P1[i].fp_y;
-	TP1[i].fp_z+=P1[i].fp_z;
+	TP1[i].fp_x=P1[i].fp_x;
+	TP1[i].fp_y=P1[i].fp_y;
+	TP1[i].fp_z=P1[i].fp_z;
 	
-	TP1[i].fe_x+=P1[i].fe_x;
-	TP1[i].fe_y+=P1[i].fe_y;
-	TP1[i].fe_z+=P1[i].fe_z;
+	TP1[i].fe_x=P1[i].fe_x;
+	TP1[i].fe_y=P1[i].fe_y;
+	TP1[i].fe_z=P1[i].fe_z;
 	
-	TP1[i].fv_x+=P1[i].fv_x;
-	TP1[i].fv_y+=P1[i].fv_y;
-	TP1[i].fv_z+=P1[i].fv_z;
+	TP1[i].fv_x=P1[i].fv_x;
+	TP1[i].fv_y=P1[i].fv_y;
+	TP1[i].fv_z=P1[i].fv_z;
 
-	TP1[i].fbx+=P1[i].fbx;
-	TP1[i].fby+=P1[i].fby;
-	TP1[i].fbz+=P1[i].fbz;
+	TP1[i].fbx=P1[i].fbx;
+	TP1[i].fby=P1[i].fby;
+	TP1[i].fbz=P1[i].fbz;
 
 	// TP1[i].fb_x=P1[i].fb_x;
 	// TP1[i].fb_y=P1[i].fb_y;
@@ -276,7 +276,7 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 
 	TP1[i].concentration=P1[i].concentration;
 
-	if(TP1[i].source==1) TP1[i].concn+=0.5*t_dt;
+	// if(TP1[i].source==1) TP1[i].concn+=0.5*t_dt;
 
 	if(TP1[i].p_type==0){
 		if(tdt*tcount>=T_start_t && tdt*tcount<T_con_t) TP1[i].temp=T_ini+tdt*tcount*(T_con-T_ini)/(T_con_t-T_start_t);

@@ -131,6 +131,10 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 									tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
 									tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
 
+									// tdwxc=tdwx*P3[i].Cm[0][0]+tdwy*P3[i].Cm[0][1]+tdwz*P3[i].Cm[0][2];
+									// tdwyc=tdwx*P3[i].Cm[1][0]+tdwy*P3[i].Cm[1][1]+tdwz*P3[i].Cm[1][2];
+									// tdwzc=tdwx*P3[i].Cm[2][0]+tdwy*P3[i].Cm[2][1]+tdwz*P3[i].Cm[2][2];
+
 									st11+=mj/rhoj*(uxj-uxi)*tdwxc;
 									st12+=0.5*mj/rhoj*((uxj-uxi)*tdwyc+(uyj-uyi)*tdwxc);
 									st22+=mj/rhoj*(uyj-uyi)*tdwyc;

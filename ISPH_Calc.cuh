@@ -155,14 +155,32 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaDeviceSynchronize();
 	}
 
+	// b.x=(num_part2-1)/t.x+1;
+	// KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// cudaDeviceSynchronize();
+	// KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// cudaDeviceSynchronize();
+
+//-------------------------------------------------------------------------------------------------
+// Immersed Boundary Method (IBM)
+//-------------------------------------------------------------------------------------------------
+	// IBM force interpolation (fb for IB)
 	b.x=(num_part2-1)/t.x+1;
-	KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-	KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
-	// IBM_predictor<<<b,t>>>(dt_structure,time,dev_SP1,dev_SP2);
+	// IBM spreading interpolation (fb for fluid)
+	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
+
+	// KERNEL_time_update_buffer<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	// cudaDeviceSynchronize();
+
+	IBM_corrector<<<b,t>>>(dt_structure,time,dev_SP1,dev_P1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
+
+	IBM_corrector_fluid<<<b,t>>>(dt,time,dev_SP1,dev_SP2,dev_P3);
+	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // 압력 계산
@@ -176,17 +194,16 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaDeviceSynchronize();
 		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
 		cudaDeviceSynchronize();
-
 		// Pressure condition for wall(Neumann boundary)
 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
-
-		// Pressure condition for outlet(Donothing boundary, Neumann boundary)
-		KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		//KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		//KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-		cudaDeviceSynchronize();
 	}
+
+	// 	// Pressure condition for outlet(Donothing boundary, Neumann boundary)
+	// 	KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// 	//KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// 	//KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// 	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // 압력힘 계산
@@ -210,31 +227,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
-// Immersed Boundary Method (IBM)
-//-------------------------------------------------------------------------------------------------
-	// IBM force interpolation (fb for IB)
-	b.x=(num_part2-1)/t.x+1;
-	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-	// IBM spreading interpolation (fb for fluid)
-	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-	// KERNEL_time_update_buffer<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
-	// cudaDeviceSynchronize();
-
-	IBM_corrector<<<b,t>>>(dt_structure,time,dev_SP1,dev_P1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-	IBM_corrector_fluid<<<b,t>>>(dt,time,dev_P1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
-
-	// b.x=(num_part2-1)/t.x+1;
-	// KERNEL_xsph3D<<<b,t>>>(g_str,g_end,dev_P1);
-	// cudaDeviceSynchronize();
-
-//-------------------------------------------------------------------------------------------------
 // Open Boudnary && APR
 //-------------------------------------------------------------------------------------------------
 
@@ -255,11 +247,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	KERNEL_compute_vorticity3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 	cudaDeviceSynchronize();
 
-
 //-------------------------------------------------------------------------------------------------
 // LDM coupling
 //-------------------------------------------------------------------------------------------------
-
 
 	if((count%freq_LDM==0)){
 		b.x=(num_part_LDM-1)/t.x+1;
@@ -272,9 +262,33 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part_LDM-1)/t.x+1;
 		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		//KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
 		KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
 		cudaDeviceSynchronize();
 	}
+
+	// if (1){
+        
+    //     b.x=(num_part2-1)/t.x+1;
+    //     Real src_x=5.0, src_y=0.0, src_z=5.0, src_r=0.05, src_val=816329.4;
+        
+    //     if(count==0)KERNEL_apply_source_concn<<<b,t>>>(dev_P1,dt,src_x,src_y,src_z,src_r,src_val);
+    //     cudaDeviceSynchronize();
+
+    //     Real diffusion_coeff=Scalar_Diffusion_coeff; // 확산 계수
+
+    //     b.x=(num_part2-1)/t.x+1;
+    //     KERNEL_clc_concn_transport3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3,diffusion_coeff);
+    //     cudaDeviceSynchronize();
+
+    //     b.x=(num_part2-1)/t.x+1;
+    //     KERNEL_update_concn<<<b,t>>>(dev_P1,dev_P3,dt);
+    //     cudaDeviceSynchronize();
+
+	// 	b.x=(num_part2-1)/t.x+1;
+    //     KERNEL_clc_concn_LDM<<<b,t>>>(g_str_LDM,g_end_LDM,dev_P1,dev_LP1);
+    //     cudaDeviceSynchronize();
+    // }
 
 //-------------------------------------------------------------------------------------------------
 // 출력
@@ -285,20 +299,23 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(file_P1,dev_P1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
 		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
-		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
 		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
 		
-		save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
+		if(count%10000==0)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
 		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
-		save_vtk_bin_single_LDM(file_LP1);
-
+		
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
 		//cudaDeviceSynchronize();
-	 }
+	}
+
+	if((count%freq_LDM)==0){
+		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
+		save_vtk_bin_single_LDM(file_LP1);
+	}
 }
 
 //-------------------------------------------------------------------------------------------------

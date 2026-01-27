@@ -26,6 +26,7 @@ typedef struct particles_array_1{
 	Real flt_s;														// Shepard filter
 	Real enthalpy;
 	Real concn;
+	Real concn_LDM;
 	Real concentration;
 
 	// turbulence (by esk)

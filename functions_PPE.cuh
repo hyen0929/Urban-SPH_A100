@@ -106,13 +106,9 @@ __global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,par
 									Real tdwz=tdwij*(zi-zj)/tdist;
 
 									Real tdwxc, tdwyc, tdwzc;      // gradient correction
-									// tdwxc=gc11*tdwx+gc12*tdwy+gc31*tdwz;
-									// tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
-									// tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
-
-									tdwxc=tdwx;
-									tdwyc=tdwy;
-									tdwzc=tdwz;      // No correction test(251219)
+									tdwxc=gc11*tdwx+gc12*tdwy+gc31*tdwz;
+									tdwyc=gc12*tdwx+gc22*tdwy+gc23*tdwz;
+									tdwzc=gc31*tdwx+gc23*tdwy+gc33*tdwz;
 
 									// Real hij=0.5*(hi+hj);
 									// Real tmp_Aij=calc_tmpA(hij);
@@ -230,6 +226,12 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	ptypei=P1[i].p_type;
 	buffer_type_i=P1[i].buffer_type;
 
+	Real gc11, gc12, gc22, gc23, gc31, gc33;
+
+	gc11=P3[i].inv_cm_xx, gc12=P3[i].inv_cm_xy;
+	gc22=P3[i].inv_cm_yy, gc23=P3[i].inv_cm_yz;
+	gc31=P3[i].inv_cm_zx, gc33=P3[i].inv_cm_zz;
+
 	xi=P1[i].x;
 	yi=P1[i].y;
 	zi=P1[i].z;
@@ -319,7 +321,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 
 							if(tdist<search_range){
 								int_t ptypej;
-								Real tdwx,tdwy,tdwz,uxj,uyj,uzj,mj,tempj,rhoj,kcj,sum_con_H,diffj,concnj,tmprd,tmprd1,tmprd2;
+								Real tmp_tdwx,tmp_tdwy,tmp_tdwz,tdwx,tdwy,tdwz,uxj,uyj,uzj,mj,tempj,rhoj,kcj,sum_con_H,diffj,concnj,tmprd,tmprd1,tmprd2;
 								
 								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
 								Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
@@ -335,6 +337,15 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 								tdwz=tdwij*(zi-zj)/tdist;
 
 								apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
+
+								// 위 함수 형태를 밖으로 꺼내면
+								// Real tdwxc=tdwx*P3[i].Cm[0][0]+tdwy*P3[i].Cm[0][1]+tdwz*P3[i].Cm[0][2];
+								// Real tdwyc=tdwx*P3[i].Cm[1][0]+tdwy*P3[i].Cm[1][1]+tdwz*P3[i].Cm[1][2];
+								// Real tdwzc=tdwx*P3[i].Cm[2][0]+tdwy*P3[i].Cm[2][1]+tdwz*P3[i].Cm[2][2];
+								// KGC - CTS (KDH)
+								// tdwx=gc11*tmp_tdwx+gc12*tmp_tdwy+gc31*tmp_tdwz;
+								// tdwy=gc12*tmp_tdwx+gc22*tmp_tdwy+gc23*tmp_tdwz;
+								// tdwz=gc31*tmp_tdwx+gc23*tmp_tdwy+gc33*tmp_tdwz;
 
 								ptypej=P1[j].p_type;
 								uxj=P1[j].ux;
@@ -535,6 +546,12 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 
 	Real fpx,fpy,fpz;
 
+	Real gc11, gc12, gc22, gc23, gc31, gc33;
+
+	gc11=P3[i].inv_cm_xx, gc12=P3[i].inv_cm_xy;
+	gc22=P3[i].inv_cm_yy, gc23=P3[i].inv_cm_yz;
+	gc31=P3[i].inv_cm_zx, gc33=P3[i].inv_cm_zz;
+
 	xi=P1[i].x;
 	yi=P1[i].y;
 	zi=P1[i].z;
@@ -625,7 +642,7 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 
 						if(P1[j].p_type<1000){
 							if(tdist<search_range){
-								Real tdwx,tdwy,tdwz,mj,rhoj,pj;
+								Real tmp_tdwx,tmp_tdwy,tmp_tdwz,tdwx,tdwy,tdwz,mj,rhoj,pj;
 								int_t ptypej;
 
 								ptypej=P1[j].p_type;
@@ -643,9 +660,16 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 								tdwy=tdwij*(yi-yj)/tdist;
 								tdwz=tdwij*(zi-zj)/tdist;
 
-								if(k_kgc_solve>0){
-									apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
-								}
+								// Gradient correction 적용
+								apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
+								// 위 함수 형태를 밖으로 꺼내면
+								// Real tdwxc=tdwx*P3[i].Cm[0][0]+tdwy*P3[i].Cm[0][1]+tdwz*P3[i].Cm[0][2];
+								// Real tdwyc=tdwx*P3[i].Cm[1][0]+tdwy*P3[i].Cm[1][1]+tdwz*P3[i].Cm[1][2];
+								// Real tdwzc=tdwx*P3[i].Cm[2][0]+tdwy*P3[i].Cm[2][1]+tdwz*P3[i].Cm[2][2];
+								// KGC - CTS (KDH)
+								// tdwx=gc11*tmp_tdwx+gc12*tmp_tdwy+gc31*tmp_tdwz;
+								// tdwy=gc12*tmp_tdwx+gc22*tmp_tdwy+gc23*tmp_tdwz;
+								// tdwz=gc31*tmp_tdwx+gc23*tmp_tdwy+gc33*tmp_tdwz;
 
 								mj=P1[j].m;
 								rhoj=P1[j].rho;
@@ -663,6 +687,7 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 									// Real C_p=-2.0*mj/(rhoi*rhoj)*((pi+Pb)*rhoj+(pj+Pb)*rhoi)/(rhoi+rhoj);      // Monaghan variation
                 					// Real C_p=-mj*(pj-pi)/(rhoi*rhoj)-mj*(2.0*p_stab)/(rhoi*rhoj)*(ptypei==ptypej);     // Pressure stabilization(KDH)
 									Real C_p=-2.0*mj/(rhoi*rhoj)*(pi*rhoj+pj*rhoi)/(rhoi+rhoj);      // Origianl (KDH, 251226)
+									// Real C_p = -mj / rhoj * (pj - pi);
 									tmpx+=C_p*tdwx;
 									tmpy+=C_p*tdwy;
 									tmpz+=C_p*tdwz;

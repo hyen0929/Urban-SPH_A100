@@ -398,11 +398,9 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
         return;
     }
 	// the force applied to fluid for no-slip condition
-	Real alpha = 1.0;
-	if (filt>1.5) alpha = 1.5/filt;
-	P1[i].fbx = alpha*fb_x/(filt+1e-10);
-	P1[i].fby = alpha*fb_y/(filt+1e-10);
-  	P1[i].fbz = fb_z/(filt+1e-10);
+	P1[i].fbx = fb_x;
+	P1[i].fby = fb_y;
+  	P1[i].fbz = fb_z;
 	P1[i].concentration = filt;
 	//
 	// P1[i].fb_x = fb_x/(filt+1e-10);

@@ -43,8 +43,8 @@ void ISPH(int_t*vii,Real*vif)
 	//-------------------------------------------------------------------------------------------------
 	char INPUT_FILE_NAME[128];
 	char INPUT_FILE_NAME2[128];
-	strcpy(INPUT_FILE_NAME,"./input/Leipzig_small_point.txt");       // input file name and address(SPH)
-	strcpy(INPUT_FILE_NAME2,"./input/Leipzig_small_point_LDM.txt");	   // input file name and address(LDM)					
+	strcpy(INPUT_FILE_NAME, INPUT_SPH_PATH);       // input file name and address(SPH)
+	strcpy(INPUT_FILE_NAME2, INPUT_LDM_PATH);	   // input file name and address(LDM)					
 
 	// char MARKER_INPUT_FILE_NAME[128];
 	// strcpy(MARKER_INPUT_FILE_NAME,"./input/marker.txt");
@@ -55,8 +55,8 @@ void ISPH(int_t*vii,Real*vif)
 	// 입자 개수 세기
 	//-------------------------------------------------------------------------------------------------
 
-	num_part=gpu_count_particle_numbers2(INPUT_FILE_NAME);
-	num_part_LDM=gpu_count_particle_numbers2(INPUT_FILE_NAME2);
+	num_part=gpu_count_particle_numbers2(INPUT_SPH_PATH);
+	num_part_LDM=gpu_count_particle_numbers2(INPUT_LDM_PATH);
 	// num_marker=gpu_count_particle_numbers2(MARKER_INPUT_FILE_NAME);
 
 	//-------------------------------------------------------------------------------------------------

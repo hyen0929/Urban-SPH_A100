@@ -110,7 +110,7 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 	Real tflt_s;
 	Real tux, tuy, tuz;
 	Real tpres, thpres, pres_g, grad_px, grad_py, grad_pz, aix, aiy, aiz;
-	Real search_coeff=2.0;      // Search increment factor (KDH)
+	Real search_coeff=1.0;      // Search increment factor (KDH)
 	hi=search_coeff*P1[i].h;
 	tmp_A=calc_tmpA(hi);
 	search_range=k_search_kappa*hi;	// search range
@@ -147,9 +147,10 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 
 	int_t flag=0;
 
-	for(int_t z=-1;z<=1;z++){
-		for(int_t y=-1;y<=1;y++){
-			for(int_t x=-1;x<=1;x++){
+	Real ncell=P1[i].ncell;
+	for(int_t z=-ncell;z<=ncell;z++){
+		for(int_t y=-ncell;y<=ncell;y++){
+			for(int_t x=-ncell;x<=ncell;x++){
 				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
 				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
 				if(g_str[k]!=cu_memset){
@@ -173,7 +174,6 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 		}
 	}
 
-	Real ncell=P1[i].ncell;
 	for(int_t z=-ncell;z<=ncell;z++){
 		for(int_t y=-ncell;y<=ncell;y++){
 			for(int_t x=-ncell;x<=ncell;x++){
@@ -214,7 +214,7 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 								tdwy=(ygnode_i-yj)/tdist * tdwij;
 								tdwz=(zgnode_i-zj)/tdist * tdwij;
 
-								apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
+								//apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
 
 								Real neighbor = (ptype_j==1)*(buffer_type_j==0);
 

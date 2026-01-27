@@ -1,142 +1,9 @@
-//////////////////////////////////////////////////////////////////////////////
-// // Single building (Case H, n=10)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	0.028 // min(x)+3.5*initial_particle_spacing
-// #define L3	13.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -0.412// min(y)+3.5*initial_particle_spacing
-// #define L_right 0.412 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 1.910
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-//
-// // Single building (Case H, n=12)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	0.02333 // min(x)+3.5*initial_particle_spacing
-// #define L3	13.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-//
-// #define L_left -0.416667// min(y)+3.5*initial_particle_spacing
-// #define L_right 0.416667 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 1.910
-//
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// Single building (Case HS, n=10, Scale up)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -62.5// min(y)+3.5*initial_particle_spacing
-// #define L_right 62.5 // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 121.0
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// // Multi block (Case RS, n=10, Scale up)
-// #define L1 	0   // min(x)+1.5*initial_particle_spacing
-// #define L2	3.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2013.304 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -132.5    // min(y)+3.5*initial_particle_spacing
-// #define L_right 132.5    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 148.0
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// CaseC (dx=0.01m)
-// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
-// #define L2	0.035   // min(x)+3.5*initial_particle_spacing
-// #define L3	10   // max(x)-3.5*initial_particle_spacing
-// #define L4	100  // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -1.46    // min(y)+3.5*initial_particle_spacing
-// #define L_right 1.46    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// CaseC (dx=0.0133333m)
-// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
-// #define L2	0.033333333   // min(x)+3.5*initial_particle_spacing
-// #define L3	10   // max(x)-3.5*initial_particle_spacing
-// #define L4	100  // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -1.46    // min(y)+3.5*initial_particle_spacing
-// #define L_right 1.46    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// Leipzig (dx=2.5m)
-// #define L1 	-900.0   // min(x)+1.5*initial_particle_spacing
-// #define L2	-817.5 // min(x)+3.5*initial_particle_spacing
-// #define L3	2200 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -691.25    // min(y)+3.5*initial_particle_spacing
-// #define L_right 691.25    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// // Leipzig (Point input, dx=2.5m)
-// #define L1 	0.0   // min(x)+1.5*initial_particle_spacing
-// #define L2	8.75 // min(x)+3.5*initial_particle_spacing
-// #define L3	2200 // max(x)-3.5*initial_particle_spacing
-// #define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -678.75    // min(y)+3.5*initial_particle_spacing
-// #define L_right 678.75    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 15463.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-// Leipzig (Point input, dx=2.5m, small)
-#define L1 	0.0   // min(x)+1.5*initial_particle_spacing
-#define L2	8.75 // min(x)+3.5*initial_particle_spacing
-#define L3	2200 // max(x)-3.5*initial_particle_spacing
-#define L4	2210 // max(x)+1.0*initial_particle_spacing
-
-#define L_left -248.75    // min(y)+3.5*initial_particle_spacing
-#define L_right 248.75    // max(y)-3.5*initial_particle_spacing
-#define L_ceiling 15463.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-#define L_MOST_x0 0.0
-#define L_MOST_xmax 1990.0
-
-// CaseA_n16 (dx=0.01m)
-// #define L1 	0.0     // min(x)+1.5*initial_particle_spacing
-// #define L2	0.0125   // min(x)+3.5*initial_particle_spacing
-// #define L3	10   // max(x)-3.5*initial_particle_spacing
-// #define L4	100  // max(x)+1.0*initial_particle_spacing
-
-// #define L_left -0.4275    // min(y)+3.5*initial_particle_spacing
-// #define L_right 0.4275    // max(y)-3.5*initial_particle_spacing
-// #define L_ceiling 363.75   // max(z)-3.5*initial_particle_spacing (if neccessary)
-
-// #define L_MOST_x0 0.0
-// #define L_MOST_xmax 1990.0
-
-//////////////////////////////////////////////////////////////////////////////
-
 __host__ float hash_random(int i, int seed) {
     uint32_t x = i * 73856093 ^ seed;
     x = (x >> 13) ^ x;
     return ((x * (x * x * 15731 + 789221) + 1376312589) & 0x7fffffff) / 2147483647.0f;
 }
-\
+
 
 __host__ float box_muller(int i, int seed_a, int seed_b) {
     float u1 = hash_random(i, seed_a);
@@ -203,8 +70,8 @@ double Interpolate_ux_caseH(Real z_inp, Real scale){
         4.502, 4.586, 4.606, 4.712, 4.854,
         4.993, 5.132, 5.449, 5.782, 6.077,
         6.338, 6.588, 6.693, 6.751, 6.751,
-        // 6.751, 6.316, 5.566, 5.132, 4.263
-		    6.751, 6.751, 6.751, 6.751, 6.751
+        6.751, 6.0, 4.0, 2.0, 0.0
+		// 6.751, 6.751, 6.751, 6.751, 6.751
     };
     static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
 
@@ -340,10 +207,13 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		// HP1[i].h=1.5;
 		// HP1[i].h_ref=HP1[i].h;
 		HP1[i].m_ref=HP1[i].m;
+		HP1[i].ux=0.0;
 		HP1[i].uy=0.0;
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
-    	Real scale_factor=0.05;       // 0.16(Experiment) / Building height
+		HP1[i].concn=0.0;
+		// Scaling factor: 1 for AIJ Valiation, 0.08 for Real case 
+    	Real scale_factor=0.08;       // 0.16(Experiment) / Building height
     	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
 		//HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
 

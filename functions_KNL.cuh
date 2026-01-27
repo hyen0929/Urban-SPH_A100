@@ -188,12 +188,21 @@ __global__ void KERNEL_clc_gradient_correction_3D(int_t*g_str,int_t*g_end,part1*
 							tzz=-mtd*(zi-zj)*(zi-zj);
 							tzz*=rtd;
 
+							// Origianl (CTS)
 							tmpxx+=txx*(ptype_j==1);
 							tmpxy+=txy*(ptype_j==1);
 							tmpyy+=tyy*(ptype_j==1);
 							tmpzx+=tzx*(ptype_j==1);
 							tmpyz+=tyz*(ptype_j==1);
 							tmpzz+=tzz*(ptype_j==1);
+
+							// Test (KDH)
+							// tmpxx+=txx;
+							// tmpxy+=txy;
+							// tmpyy+=tyy;
+							// tmpzx+=tzx;
+							// tmpyz+=tyz;
+							// tmpzz+=tzz;
 						}
 					}
 				}

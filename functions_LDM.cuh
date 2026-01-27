@@ -549,6 +549,10 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 		e_turb/=tmp_flt;
 	}
 
+	// Diffusion test
+	k_turb = 1.0;
+	e_turb = 50.5050505;
+
 	// Lagrangian Timescales
 	Real C0 = 1.76;  // Original value
 
@@ -599,7 +603,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	LP1[i].x=xc;															// update x-directional position
 	LP1[i].y=yc;															// update y-directional position
 	LP1[i].z=zc;															// update z-directional position									
-	if(zc<=0) uzc=-uzc;							// 바닥 반사 조건(kdh)								
+	if(zc>=10.0 || zc<=0) uzc=-uzc;							// 바닥 반사 조건(kdh)								
 	
 	LP1[i].sigma=sc;
 
@@ -621,6 +625,208 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	LP1[i].Sigvel = Sigvel;
 }
 
+__global__ void KERNEL_time_update_LDM_direct(const Real tdt, Real tt,int_t*g_str, int_t*g_end,L_part1*LP1, L_part2*LP2, part1*P1)
+{
+    uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if(i >= k_num_part_LDM) return;
+    if(LP1[i].i_type == 3) return;
+
+    // ========================================================================
+    // 직접 확산 파라미터 설정 (k, ε 대신)
+    // ========================================================================
+    const Real target_D = Scalar_Diffusion_coeff;  // m²/s - 목표 확산계수
+    
+    // 방법 1: sigma_u를 먼저 정하고 tau 계산 (추천)
+    const Real sigma_u = 0.05;  // m/s - 속도 RMS
+    const Real tau = target_D / (sigma_u * sigma_u);  // s - Lagrangian timescale
+    
+    // 방법 2: tau를 먼저 정하고 sigma_u 계산 (대안)
+    // const Real tau = 1.0;  // s
+    // const Real sigma_u = sqrt(target_D / tau);  // m/s
+    
+    // ========================================================================
+    // RNG initialization (기존과 동일)
+    // ========================================================================
+    unsigned long long seed;
+    curandState ss;
+    unsigned long long time_hash = (unsigned long long)(tt * 1e6);
+
+    if (LP1[i].seed < 1) {
+        LP1[i].seed = i * 321215 + time_hash + 36893211;
+        seed = LP1[i].seed;
+    }
+    else {
+        seed = LP1[i].seed;
+        seed = (seed * 1103515245 + time_hash + 12345) % 2147483647;
+        LP1[i].seed = seed;
+    }
+    curand_init(seed, i, (unsigned long long)(tt * 100), &ss);
+
+    // ========================================================================
+    // 변수 초기화
+    // ========================================================================
+    Real tx0, ty0, tz0, ts0, xc, yc, zc, sc;
+    Real tux0, tuy0, tuz0, uxc, uyc, uzc;
+    Real dux_dt, duy_dt, duz_dt;
+
+    Real xwind, ywind, zwind;
+    xwind = ywind = zwind = 0.0;
+
+    Real tmp_flt = 0.0;
+
+    tx0 = LP2[i].x0;
+    ty0 = LP2[i].y0;
+    tz0 = LP2[i].z0;
+    ts0 = LP2[i].sigma0;
+
+    tux0 = LP2[i].ux0;
+    tuy0 = LP2[i].uy0;
+    tuz0 = LP2[i].uz0;
+
+    sc = ts0;
+
+    Real xi, yi, zi, hi, search_range;
+    Real tmp_A;
+
+    xi = LP1[i].x;
+    yi = LP1[i].y;
+    zi = LP1[i].z;
+
+    hi = LP1[i].h;
+    tmp_A = calc_tmpA(hi);
+
+    // ========================================================================
+    // SPH 입자로부터 평균 유동 보간
+    // ========================================================================
+    int_t icell, jcell, kcell;
+
+    // Cell indexing
+    if((k_x_max == k_x_min)) {icell = 0;}
+    else {icell = min(floor((xi - k_x_min) / k_dcell), k_NI - 1);}
+    if((k_y_max == k_y_min)) {jcell = 0;}
+    else {jcell = min(floor((yi - k_y_min) / k_dcell), k_NJ - 1);}
+    if((k_z_max == k_z_min)) {kcell = 0;}
+    else {kcell = min(floor((zi - k_z_min) / k_dcell), k_NK - 1);}
+    
+    if(icell < 0) icell = 0;
+    if(jcell < 0) jcell = 0;
+    if(kcell < 0) kcell = 0;
+
+    int_t ncell = LP1[i].ncell;
+    
+    // Neighbor loop - SPH 속도장 보간
+    for(int_t z = -ncell; z <= ncell; z++) {
+        for(int_t y = -ncell; y <= ncell; y++) {
+            for(int_t x = -ncell; x <= ncell; x++) {
+                int_t k = idx_cell(icell + x, jcell + y, kcell + z);
+
+                if(((icell + x) < 0) || ((icell + x) > (k_NI - 1)) ||
+                   ((jcell + y) < 0) || ((jcell + y) > (k_NJ - 1)) ||
+                   ((kcell + z) < 0) || ((kcell + z) > (k_NK - 1))) continue;
+
+                if(g_str[k] != cu_memset) {
+                    int_t fend = g_end[k];
+                    for(int_t j = g_str[k]; j < fend; j++) {
+                        
+                        Real ptypej = P1[j].p_type;
+                        
+                        if(P1[j].p_type == 1) {  // SPH fluid particles only
+                            Real xj = P1[j].x;
+                            Real yj = P1[j].y;
+                            Real zj = P1[j].z;
+
+                            Real uxj = P1[j].ux;
+                            Real uyj = P1[j].uy;
+                            Real uzj = P1[j].uz;
+
+                            Real rhoj = P1[j].rho;
+                            Real mj = P1[j].m;
+                            Real hj = P1[j].h;
+
+                            search_range = k_search_kappa * fmax(hi, hj);
+
+                            Real tdist = sqrt((xi - xj) * (xi - xj) + 
+                                            (yi - yj) * (yi - yj) + 
+                                            (zi - zj) * (zi - zj)) + 1e-20;
+
+                            if(tdist < search_range) {
+                                Real twij = calc_kernel_wij(tmp_A, hi, tdist);
+
+                                xwind += uxj * mj / rhoj * twij;
+                                ywind += uyj * mj / rhoj * twij;
+                                zwind += uzj * mj / rhoj * twij;
+
+                                tmp_flt += (mj / rhoj) * twij;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Normalize interpolated velocity
+    if(tmp_flt < 1e-6) {
+        xwind = 0.0;
+        ywind = 0.0;
+        zwind = 0.0;
+    }
+    else {
+        xwind /= tmp_flt;
+        ywind /= tmp_flt;
+        zwind /= tmp_flt;
+    }
+
+    // ========================================================================
+    // Langevin 방정식 (직접 파라미터 사용)
+    // ========================================================================
+    
+    Real t_dt = tdt;
+    
+    // Ornstein-Uhlenbeck process parameters
+    Real R = exp(-t_dt / tau);
+    Real sqrt_factor = sigma_u * sqrt(1.0 - R * R);
+    
+    // Stochastic velocity update (난류 변동)
+    dux_dt = sqrt_factor * GaussianRand(&ss, 0.0, 1.0);
+    duy_dt = sqrt_factor * GaussianRand(&ss, 0.0, 1.0);
+    duz_dt = sqrt_factor * GaussianRand(&ss, 0.0, 1.0);
+
+    // Velocity update (감쇠 + 확산)
+    uxc = tux0 * R + dux_dt;
+    uyc = tuy0 * R + duy_dt;
+    uzc = tuz0 * R + duz_dt;
+
+    // ========================================================================
+    // Position update (평균 유동 + 난류 변동)
+    // ========================================================================
+    xc = tx0 + (xwind + uxc) * t_dt;
+    yc = ty0 + (ywind + uyc) * t_dt;
+    zc = tz0 + (zwind + uzc) * t_dt;
+
+    // ========================================================================
+    // Boundary conditions
+    // ========================================================================
+    if(zc >= 10.0 || zc <= 0.0) uzc = -uzc;  // 반사 경계
+
+    // ========================================================================
+    // Update particle data
+    // ========================================================================
+    LP1[i].x = xc;
+    LP1[i].y = yc;
+    LP1[i].z = zc;
+
+    LP1[i].sigma = sc;
+
+    LP1[i].ux = uxc;
+    LP1[i].uy = uyc;
+    LP1[i].uz = uzc;
+
+    // 디버깅/출력용 저장
+    LP1[i].Tscale = tau;
+    LP1[i].Sigvel = sigma_u;
+}
+
 __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
@@ -635,7 +841,7 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 	Real tmpp;
 	Real search_range,tmp_h,tmp_A;
 
-	tmp_h=2.0*LP1[i].h;
+	tmp_h=LP1[i].h;
 	tmp_A=calc_tmpA(tmp_h);
 	search_range=k_search_kappa*tmp_h;								// search range
 
@@ -657,7 +863,7 @@ __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)
 
 	tmpp=0.0;
 	Real tmppp=0.0;
-	int_t ncell=2*LP1[i].ncell;
+	int_t ncell=LP1[i].ncell;
 	for(int_t z=-ncell;z<=ncell;z++){
 		for(int_t y=-ncell;y<=ncell;y++){
 			for(int_t x=-ncell;x<=ncell;x++){

@@ -120,9 +120,8 @@ void save_vtk_bin_single_fluid(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
-	printf("Saving fluid plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving fluid plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -448,6 +447,18 @@ void save_vtk_bin_single_fluid(part1*P1,part2*P2,part3*P3)
 			}
 		}
 
+		if (!strncmp(data_label,"LDM_concn",5)) {
+			fprintf(outFile_vtk,"concn_LDM\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].concn_LDM);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
 		// concn
 		if (!strncmp(data_label,"concentration",6)) {
 			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
@@ -621,8 +632,9 @@ void save_vtk_bin_single_fluid_condition(part1*P1,part2*P2,part3*P3)
 	int_t *plot_flag;
 	plot_flag = (int*)malloc(sizeof(int)*nop);
 	//for(i=0;i<nop;i++) if(P1[i].x>0) Nparticle++;
-	//for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
-	for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2) && P1[i].p_type==1 && P1[i].z<50.0) {
+	for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
+	//for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2) && P1[i].x>0.6 && P1[i].x<1.0 && P1[i].y<0.2 && P1[i].y>-0.2 && P1[i].z<0.25) {
+	//for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2) && P1[i].p_type==1 && P1[i].z<50.0) {
 		Nparticle++;
 		plot_flag[i]=1;
 	}
@@ -633,9 +645,8 @@ void save_vtk_bin_single_fluid_condition(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/fluid_condition_%dstp.vtk",DirName, count);
-	printf("Saving fluid plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/fluid_condition_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving fluid plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -961,6 +972,18 @@ void save_vtk_bin_single_fluid_condition(part1*P1,part2*P2,part3*P3)
 			}
 		}
 
+		if (!strncmp(data_label,"LDM_concn",5)) {
+			fprintf(outFile_vtk,"concn_LDM\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].concn_LDM);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
 		// concn
 		if (!strncmp(data_label,"concentration",6)) {
 			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
@@ -1145,9 +1168,8 @@ void save_vtk_bin_single_fluid_CaseC(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",DirName, count);
-	printf("Saving fluid plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/fluid_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving fluid plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -1473,6 +1495,18 @@ void save_vtk_bin_single_fluid_CaseC(part1*P1,part2*P2,part3*P3)
 			}
 		}
 
+		if (!strncmp(data_label,"LDM_concn",5)) {
+			fprintf(outFile_vtk,"concn_LDM\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].concn_LDM);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
 		// concn
 		if (!strncmp(data_label,"concentration",6)) {
 			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
@@ -1657,9 +1691,8 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/LDM_%dstp.vtk",DirName, count);
-	printf("Saving LDM plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/LDM_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving LDM plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -1703,7 +1736,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 			}
 		}
 
-		if (!strncmp(data_label,"velocity",4)) {
+		else if (!strncmp(data_label,"velocity",4)) {
 			fprintf(outFile_vtk,"velocity\t3\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1719,7 +1752,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 			}
 		}
 		// concn
-		if (!strncmp(data_label,"concn",5)) {
+		else if (!strncmp(data_label,"concn",5)) {
 			fprintf(outFile_vtk,"concn\t1\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1731,7 +1764,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 			}
 		}
 		// concn
-		if (!strncmp(data_label,"concentration",6)) {
+		else if (!strncmp(data_label,"concentration",6)) {
 			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1742,7 +1775,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
-		if (!strncmp(data_label,"mass",4)) {
+		else if (!strncmp(data_label,"mass",4)) {
 			fprintf(outFile_vtk,"mass\t1\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1753,7 +1786,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
-		if (!strncmp(data_label,"ncell",5)) {
+		else if (!strncmp(data_label,"ncell",5)) {
 			fprintf(outFile_vtk,"ncell\t1\t%d\tint\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1764,7 +1797,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
-		if (!strncmp(data_label,"k_turb",4)) {
+		else if (!strncmp(data_label,"k_turb",4)) {
 			fprintf(outFile_vtk,"k_turb\t1\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1775,7 +1808,7 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
-		if (!strncmp(data_label,"e_turb",4)) {
+		else if (!strncmp(data_label,"e_turb",4)) {
 			fprintf(outFile_vtk,"e_turb\t1\t%d\tfloat\n",Nparticle);
 			for(i=0;i<nop;i++){
 				//if(LP1[i].x>0){
@@ -1786,6 +1819,8 @@ void save_vtk_bin_single_LDM(L_part1*LP1)
 				}
 			}
 		}
+
+		else printf("unvalid data type!\n");
 	}
 	fclose(outFile_vtk);
 }
@@ -1811,9 +1846,8 @@ void save_vtk_bin_single_boundary(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/boundary_%dstp.vtk",DirName, count);
-	printf("Saving boundary plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/boundary_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving boundary plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -2332,9 +2366,8 @@ void save_vtk_bin_single_buildings(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/building_%dstp.vtk",DirName, count);
-	printf("Saving building plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/building_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving building plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -2660,6 +2693,18 @@ void save_vtk_bin_single_buildings(part1*P1,part2*P2,part3*P3)
 			}
 		}
 
+		if (!strncmp(data_label,"LDM_concn",5)) {
+			fprintf(outFile_vtk,"concn_LDM\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].concn_LDM);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
 		// concn
 		if (!strncmp(data_label,"concentration",6)) {
 			fprintf(outFile_vtk,"concentration\t1\t%d\tfloat\n",Nparticle);
@@ -2835,7 +2880,7 @@ void save_vtk_bin_single_vorticity(part1*P1,part2*P2,part3*P3)
 	//for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
 	for(i=0;i<nop;i++) if((P1[i].i_type==1)&&(P1[i].p_type==1)) {
 		Real omega = sqrt(P3[i].omx*P3[i].omx+P3[i].omy*P3[i].omy+P3[i].omz*P3[i].omz);
-		if(omega>0.5) {
+		if(omega>50) {
 			Nparticle++;
 			plot_flag[i]=1;
 		}
@@ -2847,9 +2892,8 @@ void save_vtk_bin_single_vorticity(part1*P1,part2*P2,part3*P3)
 
 	// Filename: It should be series of frame numbers(nameXXX.vtk) for the sake of auto-reading in PARAVIEW.
 	char FileName_vtk[256];
-	char DirName[256]="Leipzig_point_mini";
-	sprintf(FileName_vtk,"./%s/vorticity_%dstp.vtk",DirName, count);
-	printf("Saving vorticity plot to '%s', count=%d\n\n",DirName,count);
+	sprintf(FileName_vtk,"./%s/vorticity_%dstp.vtk",OUTPUT_DIR_NAME, count);
+	printf("Saving vorticity plot to '%s', count=%d\n\n",OUTPUT_DIR_NAME,count);
 	// If the file already exists,its contents are discarded and create the new one.
 	FILE*outFile_vtk;
 	outFile_vtk=fopen(FileName_vtk,"w");
@@ -3170,6 +3214,18 @@ void save_vtk_bin_single_vorticity(part1*P1,part2*P2,part3*P3)
 				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
 				if(plot_flag[i]==1){
 					val=FloatSwap(P1[i].concn);
+					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
+				}
+			}
+		}
+
+		if (!strncmp(data_label,"LDM_concn",5)) {
+			fprintf(outFile_vtk,"concn_LDM\t1\t%d\tfloat\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				// if((P1[i].p_type==2)|(P1[i].p_type==9)){
+				if(plot_flag[i]==1){
+					val=FloatSwap(P1[i].concn_LDM);
 					fwrite((void*)&val,sizeof(float),1,outFile_vtk);
 				}
 			}

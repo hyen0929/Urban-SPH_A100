@@ -108,6 +108,7 @@ char LDM_plot_data[20][20]; // LDM plot 할 변수
 //---------------------------------------------------------------
 
 #include "function_init.cuh"
+#include "case_config.cuh"
 #include "functions_NNPS.cuh"
 #include "functions_KNL.cuh"
 #include "functions_PROP.cuh"
@@ -120,6 +121,7 @@ char LDM_plot_data[20][20]; // LDM plot 할 변수
 #include "functions_BC.cuh"
 #include "functions_MOST.cuh"
 #include "functions_LDM.cuh"
+#include "functions_Diffusion.cuh"
 // #include "functions_APR.cuh"
 //#include "functions_APR_etc.cuh"
 #include "functions_TIME_ISPH.cuh"
@@ -135,7 +137,7 @@ int main(int argc,char**argv)
 	ngpu=atoi(argv[1]);
 
 	char fn[64],fn2[64];
-	strcpy(fn,"./input/solv.txt");
+	strcpy(fn,SOLV_SPH_PATH);
 	strcpy(fn2,"./input/data.txt");
 
 	read_solv_input(vii,vif,fn);
