@@ -109,6 +109,7 @@ char LDM_plot_data[20][20]; // LDM plot 할 변수
 
 #include "function_init.cuh"
 #include "case_config.cuh"
+#include "functions_initial_conditions.cuh"
 #include "functions_NNPS.cuh"
 #include "functions_KNL.cuh"
 #include "functions_PROP.cuh"

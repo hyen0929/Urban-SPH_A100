@@ -137,7 +137,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi,uxi,uyi,uzi;
 	Real rhoi;
-	Real search_range,tmp_h,tmp_A;
+	Real search_range,hi,tmp_A;
 	// Real tmpx,tmpy,tmppx,tmppy,tmp_R;
 	Real tmpux, tmpuy, tmpuz, filt;
 	int p_type_i;
@@ -151,9 +151,9 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
   	uzi=P1[i].uz;
 	rhoi=P1[i].rho;
 
-	tmp_h=IBM_length*P1[i].h;
-	tmp_A=calc_tmpA(tmp_h);
-	search_range=k_search_kappa*tmp_h;
+	hi=IBM_length*P1[i].h;
+	tmp_A=calc_tmpA(hi);
+	search_range=k_search_kappa*hi;
 
 	// calculate I,J,K in cell
 	if((k_x_max==k_x_min)){icell=0;}
@@ -196,8 +196,8 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 								if(tdist<search_range){
 									Real mj,uxj,uyj,uzj,rhoj,tmprho;
 									Real hj;
-									Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
-									hj=P1[i].h;
+									Real twij=calc_kernel_wij(tmp_A,hi,tdist);
+									hj=P1[i].h;  // IBM 입자 기준으로
 
 									// apply_MLS_filter_2D(P3[i].A,twij,&twij,xi,xj,yi,yj,hj);
 
@@ -236,7 +236,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		P1[i].fbz = 0.0;
 	}
 	else{
-		const Real beta = 0.2;       // Relaxation factor
+		const Real beta = 1.0;       // Relaxation factor
 		P1[i].fbx = beta * 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
 		P1[i].fby = beta * 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
   		P1[i].fbz = beta * 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
@@ -295,7 +295,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi,uxi,uyi,uzi;
 	Real rhoi;
-	Real search_range,tmp_h,tmp_A;
+	Real search_range,hi,tmp_A;
 	Real tmpux, tmpuy,tmpuz,filt;
 	int p_type_i;
 	Real fb_x, fb_y, fb_z;
@@ -309,8 +309,8 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	uyi=P1[i].uy;
   	uzi=P1[i].uz;
 	rhoi=P1[i].rho;
-	tmp_h=IBM_length*P1[i].h;
-	tmp_A=calc_tmpA(tmp_h);
+	hi=P1[i].h;
+	tmp_A=calc_tmpA(hi);
 
 	//if(abs(xi-0.76)<1e-3 && abs(zi-0.156)<1e-3) return;      // for AIJ Case H
 	//if(abs(xi-95)<1e-3 && abs(zi-19.5)<1e-3) return;         // for AIJ Case HS
@@ -350,15 +350,14 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 							if(P1[j].p_type==1000){
 								Real hj=IBM_length*P1[j].h;
 								Real Aj=calc_tmpA(hj);
-								search_range=k_search_kappa*hj;
+								search_range=k_search_kappa*hi;    // IBM 입자 기준으로
 								
-
             					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
 									Real mj,tdwx,tdwy,uxj,uyj,uzj,rhoj,tmprho;
 									Real fb_xm, fb_ym, fb_zm;
-									Real twij=calc_kernel_wij(Aj,hj,tdist);
-
+									Real twij=calc_kernel_wij(tmp_A,hi,tdist);    // IBM 입자 기준으로
+ 
 									p_type_j=P1[j].p_type;
 
 									mj=P1[j].m;
@@ -372,7 +371,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 									fb_zm = P1[j].fbz;
 
 									// if(k_kgc_solve>0){
-									// 	Real twij=calc_kernel_wij(tmp_A,tmp_h,tdist);
+									// 	Real twij=calc_kernel_wij(tmp_A,hi,tdist);
 									// 	apply_gradient_correction_2D(P3[i].Cm,twij,tdwx,tdwy,&tdwx,&tdwy);
 									// }
 
@@ -389,6 +388,11 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 			}
 		}
 	}
+
+	// const Real filt_min = 1e-3;   // Changed: align with force kernel
+	// const Real filt_max = 2.0;    // Changed: optional upper clamp (tune)
+
+	// Real filt_eff = fmin(fmax(filt, filt_min), filt_max); // Changed
 
 	if(filt < 1e-12){
         P1[i].fbx = 0.0f;

@@ -109,7 +109,7 @@ void save_vtk_bin_single_fluid(part1*P1,part2*P2,part3*P3)
 	plot_flag = (int*)malloc(sizeof(int)*nop);
 	//for(i=0;i<nop;i++) if(P1[i].x>0) Nparticle++;
 	//for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
-	for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2)&&P1[i].p_type==1) {
+	for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2)) {
 		Nparticle++;
 		plot_flag[i]=1;
 	}
@@ -2880,7 +2880,7 @@ void save_vtk_bin_single_vorticity(part1*P1,part2*P2,part3*P3)
 	//for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
 	for(i=0;i<nop;i++) if((P1[i].i_type==1)&&(P1[i].p_type==1)) {
 		Real omega = sqrt(P3[i].omx*P3[i].omx+P3[i].omy*P3[i].omy+P3[i].omz*P3[i].omz);
-		if(omega>50) {
+		if(omega>0.25) {
 			Nparticle++;
 			plot_flag[i]=1;
 		}

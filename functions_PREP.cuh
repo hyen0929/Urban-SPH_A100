@@ -54,7 +54,7 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 	tmp_A=calc_tmpA(hi);
 	th=hi*L_SPS;
 	search_range=k_search_kappa*hi;	// search range
-	visi=viscosity2(ptypei,tempi);
+	visi=viscosity2(tempi,ptypei);
 
 	// calculate I,J,K in cell
 	if((k_x_max==k_x_min)){icell=0;}

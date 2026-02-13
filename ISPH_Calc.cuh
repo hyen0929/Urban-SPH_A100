@@ -54,6 +54,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		// 완화거리 가변 모델 사용
 		// if(dim==3) KERNEL_variable_smoothing_length3D<<<b,t>>>(g_str,g_end,dev_SP1);
 		// cudaDeviceSynchronize();
+	
 	}
 	else{
 		// 0스텝 이후 단순 복사 >> 입자정보를 SP1, SP2 에 복사
@@ -65,17 +66,14 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		// 일부 입자정보 리셋
 		cudaMemset(dev_P3,0.0,sizeof(part3)*num_part2);
 		pthread_barrier_wait(&barrier);
-
-		// LDM 입자 배열 업데이트
-		cudaMemcpy(dev_SLP1,dev_LP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
-		pthread_barrier_wait(&barrier);
-		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
-		pthread_barrier_wait(&barrier);
-		
 	}
 
 	// LDM 주변입자 검색 (농도 계산)
-	if(count%freq_output==0){
+	if(count%freq_LDM==0){
+
+		b.x=(num_part_LDM-1)/t.x+1;
+		particle_releasing_Dispersion_Kernel<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
+
 		// g_str을 리셋
 		cudaMemset(g_str_LDM,cu_memset,sizeof(int_t)*num_cells);
 
@@ -95,6 +93,13 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 		// 입자정보를 P1 에 복사
 		cudaMemcpy(dev_LP1,dev_SLP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
+		pthread_barrier_wait(&barrier);
+	}
+	else{
+		// LDM 입자 배열 업데이트
+		cudaMemcpy(dev_SLP1,dev_LP1,sizeof(L_part1)*num_part_LDM,cudaMemcpyDeviceToDevice);
+		pthread_barrier_wait(&barrier);
+		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
 	}
 
@@ -164,7 +169,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 // Immersed Boundary Method (IBM)
 //-------------------------------------------------------------------------------------------------
-	// IBM force interpolation (fb for IB)
+	//IBM force interpolation (fb for IB)
 	b.x=(num_part2-1)/t.x+1;
 	IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
@@ -219,6 +224,14 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaDeviceSynchronize();
 	}
 
+	// b.x=(num_part2-1)/t.x+1;
+	// IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// cudaDeviceSynchronize();
+
+	// // IBM spreading interpolation (fb for fluid)
+	// IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+	// cudaDeviceSynchronize();
+
 //-------------------------------------------------------------------------------------------------
 // 시간 적분 (Time Integration)
 //-------------------------------------------------------------------------------------------------
@@ -252,8 +265,8 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 //-------------------------------------------------------------------------------------------------
 
 	if((count%freq_LDM==0)){
-		b.x=(num_part_LDM-1)/t.x+1;
-		particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
+		// b.x=(num_part_LDM-1)/t.x+1;
+		// particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
 		if(time_type==Pre_Cor){
 			b.x=(num_part_LDM-1)/t.x+1;
 			KERNEL_clc_predictor_Dispersion<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2);
@@ -261,34 +274,38 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		}
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part_LDM-1)/t.x+1;
-		KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
-		//KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
-		KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
+		if(CASE_ID<2000)KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		if(CASE_ID>2000)KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		if(CASE_ID<2000)KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
 		cudaDeviceSynchronize();
 	}
 
-	// if (1){
-        
-    //     b.x=(num_part2-1)/t.x+1;
-    //     Real src_x=5.0, src_y=0.0, src_z=5.0, src_r=0.05, src_val=816329.4;
-        
-    //     if(count==0)KERNEL_apply_source_concn<<<b,t>>>(dev_P1,dt,src_x,src_y,src_z,src_r,src_val);
-    //     cudaDeviceSynchronize();
+	if (CASE_ID>2000){
 
-    //     Real diffusion_coeff=Scalar_Diffusion_coeff; // 확산 계수
+        b.x=(num_part2-1)/t.x+1;
+        Real src_x=5.0, src_y=0.0, src_z=3.0, src_r=0.05, src_val=1e5;
 
-    //     b.x=(num_part2-1)/t.x+1;
-    //     KERNEL_clc_concn_transport3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3,diffusion_coeff);
-    //     cudaDeviceSynchronize();
+        if(count==0)KERNEL_apply_source_concn_Gaussian<<<b,t>>>(dev_P1,dt,src_x,src_y,src_z,src_r,src_val);
+        cudaDeviceSynchronize();
 
-    //     b.x=(num_part2-1)/t.x+1;
-    //     KERNEL_update_concn<<<b,t>>>(dev_P1,dev_P3,dt);
-    //     cudaDeviceSynchronize();
+        Real diffusion_coeff=Scalar_Diffusion_coeff; // 확산 계수
 
-	// 	b.x=(num_part2-1)/t.x+1;
-    //     KERNEL_clc_concn_LDM<<<b,t>>>(g_str_LDM,g_end_LDM,dev_P1,dev_LP1);
-    //     cudaDeviceSynchronize();
-    // }
+        // Scalar transport sub-cycling: freq_scalar 스텝에 1번, dt를 그만큼 키워서 호출
+        int freq_scalar = 10;
+        if(count % freq_scalar == 0){
+            b.x=(num_part2-1)/t.x+1;
+            KERNEL_advect_concn_SL<<<b,t>>>(g_str, g_end, dev_P1, dev_P3, diffusion_coeff, freq_scalar*dt);
+            cudaDeviceSynchronize();
+
+            b.x=(num_part2-1)/t.x+1;
+            KERNEL_copy_concn_adv<<<b,t>>>(dev_P1,dev_P3);
+            cudaDeviceSynchronize();
+        }
+
+		b.x=(num_part2-1)/t.x+1;
+        KERNEL_clc_concn_LDM<<<b,t>>>(g_str_LDM,g_end_LDM,dev_P1,dev_LP1);
+        cudaDeviceSynchronize();
+    }
 
 //-------------------------------------------------------------------------------------------------
 // 출력
@@ -302,17 +319,16 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
-		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
-		
-		if(count%10000==0)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
-		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
+		if(count%100==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
+		if(CASE_ID>2000)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
+		if(CASE_ID<2000)save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
 		
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
 		//cudaDeviceSynchronize();
 	}
 
-	if((count%freq_LDM)==0){
+	if(CASE_ID<2004 && count%100==0){
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);
 	}

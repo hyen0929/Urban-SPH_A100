@@ -172,13 +172,13 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 			dux_dt=P3[i].fpx*(buffer_type==0)+P1[i].fmx;			// x-directional acceleration
 			duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fmy;			// y-directional acceleration
 			duz_dt=P3[i].fpz*(buffer_type==0);			// z-directional acceleration
-		}else{
+		}
+		else{
 			tux0=P2[i].ux0;
 			tuy0=P2[i].uy0;
 			tuz0=P2[i].uz0;
 			dux_dt=duy_dt=duz_dt=0.0;
 		}
-
 		uxc=tux0+dux_dt*(t_dt);										// correct x-directional velocity
 		uyc=tuy0+duy_dt*(t_dt);										// correct y-directional velocity
 		uzc=tuz0+duz_dt*(t_dt);										// correct z-directional velocity
@@ -197,7 +197,7 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 		xc=tx0+(P2[i].ux0+uxc)/2.0*(t_dt)*(p_type_i>0)*(P1[i].eli);												// correct x-directional position
 		yc=ty0+(P2[i].uy0+uyc)/2.0*(t_dt)*(p_type_i>0)*(P1[i].eli);												// correct Y-directional position
 		zc=tz0+(P2[i].uz0+uzc)/2.0*(t_dt)*(p_type_i>0)*(P1[i].eli);
-
+		
 		TP1[i].ux=uxc;														// update x-directional velocity
 		TP1[i].uy=uyc;														// update y-directional velocity
 		TP1[i].uz=uzc;														// update z-directional velocity
@@ -263,10 +263,6 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	TP1[i].fbx=P1[i].fbx;
 	TP1[i].fby=P1[i].fby;
 	TP1[i].fbz=P1[i].fbz;
-
-	// TP1[i].fb_x=P1[i].fb_x;
-	// TP1[i].fb_y=P1[i].fb_y;
-	// TP1[i].fb_z=P1[i].fb_z;
 
 	TP1[i].fmx = P1[i].fmx;
 	TP1[i].fmy = P1[i].fmy;

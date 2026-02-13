@@ -99,8 +99,11 @@ typedef struct particles_array_3{
 	// Real virial,radius;
 
 	Real cc;
+	Real concn_adv;
 	Real nx, ny, nz;																// color code
 	// Real lambda;
+
+	Real grad_cx, grad_cy, grad_cz;										// color code gradient
 
 	Real Cm[Correction_Matrix_Size][Correction_Matrix_Size];
 	// Real A[Correction_Matrix_Size][Correction_Matrix_Size];

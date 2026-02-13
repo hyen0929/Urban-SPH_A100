@@ -102,7 +102,7 @@
 
 #define ncell_init 2
 #define Cell_division_factor 4
-#define IBM_length 1.0
+#define IBM_length 2.5
 #define Pressure_length 1.0
 #define XSPH_length 0.66667
 
@@ -130,7 +130,7 @@
 #define Pb 0.0
 #define tempb 300.0     // Temp0 for boussinesq
 
-#define Scalar_Diffusion_coeff 0.01  // Scalar diffusion coefficient (m^2/s)
+#define Scalar_Diffusion_coeff 0.0000001  // Scalar diffusion coefficient (m^2/s)
 
 // Deardorff SGS model constants
 #define Ck_sgs 0.1
@@ -148,7 +148,7 @@
 
 #define SIZ 0.01
 
-#define CASE_NAME "Leipzig_point"  // input file name
+#define CASE_NAME "Transport_advection"  // input file name
 
 #define INPUT_SPH_PATH  "./input/" CASE_NAME "/" CASE_NAME ".txt"
 #define INPUT_LDM_PATH  "./input/" CASE_NAME "/" CASE_NAME "_LDM.txt"

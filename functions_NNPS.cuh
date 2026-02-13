@@ -1,191 +1,3 @@
-__host__ float hash_random(int i, int seed) {
-    uint32_t x = i * 73856093 ^ seed;
-    x = (x >> 13) ^ x;
-    return ((x * (x * x * 15731 + 789221) + 1376312589) & 0x7fffffff) / 2147483647.0f;
-}
-
-
-__host__ float box_muller(int i, int seed_a, int seed_b) {
-    float u1 = hash_random(i, seed_a);
-    float u2 = hash_random(i, seed_b);
-
-    return sqrtf(-2.0f * logf(u1 + 1e-6f)) * cosf(2 * M_PI * u2);
-}
-
-double Interpolate_ux_caseC(Real z_inp, Real scale){
-  Real z_scale=scale;             // (Building height / 0.08)
-  Real z=z_scale*z_inp;
-  Real u_scale=1.0;
-  static const double z_data[] = {
-        0.01, 0.02, 0.03, 0.05, 0.07,
-		0.1, 0.15, 0.2, 0.25, 0.3,
-		0.35, 0.4, 0.6, 0.8, 1.0, 1.2
-    };
-    static const double u_data[] = {
-        2.372, 2.434, 2.548, 2.912, 3.042,
-		3.392, 3.483, 3.654, 3.82, 4.019,
-		4.205, 4.343, 4.985, 5.713, 6.12, 6.201
-    };
-    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
-
-    // 아래/위 한 점으로 외삽
-    if (z <= z_data[0]) {
-        double dz = z_data[1] - z_data[0];
-        double du = u_data[1] - u_data[0];
-        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
-    }
-    if (z >= z_data[N-1]) {
-        double dz = z_data[N-1] - z_data[N-2];
-        double du = u_data[N-1] - u_data[N-2];
-        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
-    }
-
-    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
-    const double* it = std::lower_bound(z_data, z_data + N, z);
-    std::size_t i = static_cast<std::size_t>(it - z_data);
-    // 안전장치 (이론상 도달 X)
-    if (i == 0) i = 1;
-
-    double z0 = z_data[i-1], z1 = z_data[i];
-    double u0 = u_data[i-1], u1 = u_data[i];
-    double t  = (z - z0) / (z1 - z0);       // 0~1
-    return u_scale*((1.0 - t) * u0 + t * u1);         // 선형 보간
-}
-
-double Interpolate_ux_caseH(Real z_inp, Real scale){
-  Real z_scale=scale;             // (Building height / 0.16)
-  Real z=z_scale*z_inp;
-  Real u_scale=1.0;
-  static const double z_data[] = {
-        0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
-        0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
-        0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
-        0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
-        0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
-        0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
-    };
-    static const double u_data[] = {
-        2.745, 2.935, 3.175, 3.435, 3.627,
-        3.824, 4.021, 4.210, 4.362, 4.491,
-        4.502, 4.586, 4.606, 4.712, 4.854,
-        4.993, 5.132, 5.449, 5.782, 6.077,
-        6.338, 6.588, 6.693, 6.751, 6.751,
-        6.751, 6.0, 4.0, 2.0, 0.0
-		// 6.751, 6.751, 6.751, 6.751, 6.751
-    };
-    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
-
-    // 아래/위 한 점으로 외삽
-    if (z <= z_data[0]) {
-        double dz = z_data[1] - z_data[0];
-        double du = u_data[1] - u_data[0];
-        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
-    }
-    if (z >= z_data[N-1]) {
-        double dz = z_data[N-1] - z_data[N-2];
-        double du = u_data[N-1] - u_data[N-2];
-        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
-    }
-
-    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
-    const double* it = std::lower_bound(z_data, z_data + N, z);
-    std::size_t i = static_cast<std::size_t>(it - z_data);
-    // 안전장치 (이론상 도달 X)
-    if (i == 0) i = 1;
-
-    double z0 = z_data[i-1], z1 = z_data[i];
-    double u0 = u_data[i-1], u1 = u_data[i];
-    double t  = (z - z0) / (z1 - z0);       // 0~1
-    return u_scale*((1.0 - t) * u0 + t * u1);         // 선형 보간
-}
-
-double Interpolate_k_caseH(Real z_inp, Real scale){
-  Real scale_factor=scale;             // (0.16 / Buidling height)
-  Real z=scale_factor*z_inp;
-  static const double z_data[] = {
-        0.00393,  0.01178,  0.02356,  0.04123,  0.06086,
-        0.08245,  0.10209,  0.11975,  0.14135,  0.16294,
-        0.21202,  0.23166,  0.25325,  0.30233,  0.35141,
-        0.40442,  0.4535,   0.50061,  0.55362,  0.60466,
-        0.70282,  0.74209
-    };
-    static const double u_data[] = {
-        0.3687,   0.39304,  0.4313,   0.49043,  0.53913,
-        0.56696,  0.58087,  0.62261,  0.62957,  0.64696,
-        0.66087,  0.64696,  0.62261,  0.5913,   0.51826,
-        0.4313,   0.3513,   0.25043,  0.17043,  0.10087,
-        0.0,      0.0
-    };
-    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
-
-    // 아래/위 한 점으로 외삽
-    if (z <= z_data[0]) {
-        double dz = z_data[1] - z_data[0];
-        double du = u_data[1] - u_data[0];
-        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
-    }
-    if (z >= z_data[N-1]) {
-        double dz = z_data[N-1] - z_data[N-2];
-        double du = u_data[N-1] - u_data[N-2];
-        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
-    }
-
-    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
-    const double* it = std::lower_bound(z_data, z_data + N, z);
-    std::size_t i = static_cast<std::size_t>(it - z_data);
-    // 안전장치 (이론상 도달 X)
-    if (i == 0) i = 1;
-
-    double z0 = z_data[i-1], z1 = z_data[i];
-    double u0 = u_data[i-1], u1 = u_data[i];
-    double t  = (z - z0) / (z1 - z0);       // 0~1
-    return (1.0 - t) * u0 + t * u1;         // 선형 보간
-}
-
-double Interpolate_k_caseHS(Real z_inp){
-  Real z_scale = 0.16/20.0;             // (0.16 / Buidling height)
-  Real u_scale = 1.5;
-  Real z=z_scale*z_inp;
-  static const double z_data[] = {
-        0.00393,  0.01178,  0.02356,  0.04123,  0.06086,
-        0.08245,  0.10209,  0.11975,  0.14135,  0.16294,
-        0.21202,  0.23166,  0.25325,  0.30233,  0.35141,
-        0.40442,  0.4535,   0.50061,  0.55362,  0.60466,
-        0.70282,  0.74209
-    };
-    static const double u_data[] = {
-        0.3687,   0.39304,  0.4313,   0.49043,  0.53913,
-        0.56696,  0.58087,  0.62261,  0.62957,  0.64696,
-        0.66087,  0.64696,  0.62261,  0.5913,   0.51826,
-        0.4313,   0.3513,   0.25043,  0.17043,  0.10087,
-        0.0,      0.0
-    };
-    static const std::size_t N = sizeof(z_data)/sizeof(z_data[0]);
-
-    // 아래/위 한 점으로 외삽
-    if (z <= z_data[0]) {
-        double dz = z_data[1] - z_data[0];
-        double du = u_data[1] - u_data[0];
-        return u_data[0] + ( (dz == 0.0) ? 0.0 : (z - z_data[0]) * (du/dz) );
-    }
-    if (z >= z_data[N-1]) {
-        double dz = z_data[N-1] - z_data[N-2];
-        double du = u_data[N-1] - u_data[N-2];
-        return u_data[N-2] + ( (dz == 0.0) ? 0.0 : (z - z_data[N-2]) * (du/dz) );
-    }
-
-    // 구간 탐색 (z_data[i-1] <= z < z_data[i])
-    const double* it = std::lower_bound(z_data, z_data + N, z);
-    std::size_t i = static_cast<std::size_t>(it - z_data);
-    // 안전장치 (이론상 도달 X)
-    if (i == 0) i = 1;
-
-    double z0 = z_data[i-1], z1 = z_data[i];
-    double u0 = u_data[i-1], u1 = u_data[i];
-    double t  = (z - z0) / (z1 - z0);       // 0~1
-    return ((1.0 - t) * u0 + t * u1)*u_scale;         // 선형 보간
-}
-
 void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 
 	int_t i,c_count;
@@ -195,7 +7,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 
 	for(i=0;i<num_part;i++){
 
-		Real xi, yi, zi;
+		Real xi, yi, zi, scale_factor;
 
 		xi=HP1[i].x;
 		yi=HP1[i].y;
@@ -204,19 +16,36 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		HP1[i].i_type=1;
 		HP1[i].buffer_type=0;
 
-		// HP1[i].h=1.5;
-		// HP1[i].h_ref=HP1[i].h;
 		HP1[i].m_ref=HP1[i].m;
 		HP1[i].ux=0.0;
 		HP1[i].uy=0.0;
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
 		HP1[i].concn=0.0;
-		// Scaling factor: 1 for AIJ Valiation, 0.08 for Real case 
-    	Real scale_factor=0.08;       // 0.16(Experiment) / Building height
-    	HP1[i].ux=Interpolate_ux_caseH(HP1[i].z,scale_factor);
-		//HP1[i].k_turb=Interpolate_k_caseH(HP1[i].z,scale_factor);
 
+		// Initial condition selector
+		if(CASE_ID>100 && CASE_ID<200) {
+			scale_factor=1.0;
+			HP1[i].ux=Interpolate_ux_caseA(HP1[i].z,scale_factor);
+			HP1[i].k_turb=Interpolate_k_caseA(HP1[i].z,scale_factor);
+		}
+		if(CASE_ID>200 && CASE_ID<300) {
+			scale_factor=0.005;
+			HP1[i].ux=Interpolate_ux_caseA(HP1[i].z,scale_factor);
+			//HP1[i].k_turb=Interpolate_k_caseC(HP1[i].z,scale_factor);
+		}
+		if(CASE_ID>300 && CASE_ID<400) {
+			scale_factor=1.0;
+			HP1[i].ux=Interpolate_ux_caseC(HP1[i].z,scale_factor);
+			//HP1[i].k_turb=Interpolate_k_caseC(HP1[i].z,scale_factor);
+		}
+		if(CASE_ID>1000 && CASE_ID<1100) {
+			//HP1[i].ux=Interpolate_ux_ABL(HP1[i].z);
+			HP1[i].ux=1.5*Interpolate_ux_caseA(HP1[i].z,0.08);
+			HP1[i].k_turb=0.0;
+		}
+		if(CASE_ID==2001) HP1[i].ux=0.0;	// Scalar transport test
+		if(CASE_ID==2002) HP1[i].ux=0.3;	// Scalar transport test with advection
 		// // Inner building particle ux=0.0
 		// if(HP1[i].p_type==1 && zi<0.2){
 		// 	if(xi>1.0 && xi<1.2 && yi>-0.5 && yi<-0.3) HP1[i].ux=0.0;
@@ -231,33 +60,6 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		// }
 		// else if(HP1[i].p_type==1 && zi<0.4){
 		// 	if(xi>1.4 && xi<1.6 && yi>-0.1 && yi<0.1) HP1[i].ux=0.0;
-		// }
-    	
-    
-		// if((HP1[i].x-765.0)*(HP1[i].x-765.0)+(HP1[i].y-0.0)*(HP1[i].y-0.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
-    	// else if((HP1[i].x-425.0)*(HP1[i].x-425.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-2.5)*(HP1[i].z-2.5)<1e-3) {HP1[i].source=1;}
-    	// else if((HP1[i].x-435.0)*(HP1[i].x-435.0)+(HP1[i].y-155.0)*(HP1[i].y-155.0)+(HP1[i].z-12.5)*(HP1[i].z-12.5)<1e-3) {HP1[i].source=1;}
-    	// else if((HP1[i].x-500.0)*(HP1[i].x-500.0)+(HP1[i].y-5.0)*(HP1[i].y-5.0)+(HP1[i].z-57.5)*(HP1[i].z-57.5)<1e-3) {HP1[i].source=1;}
-    	
-		// HP1[i].temp=310.0-10.0*(log(HP1[i].z+1.0)/log(301.0));
-		// HP1[i].pres=HP1[i].rho*Gravitational_CONST*(L_ceiling+20.0-HP1[i].z);
-    	// HP1[i].pres0=HP1[i].pres;
-		// HP1[i].blood_index=0;
-		// HP1[i].M_num=0;
-		// if(HP1[i].p_type!=1){
-		// 	if(HP1[i].z<0) HP1[i].p_type=0;
-		// 	else if(HP1[i].y<0||HP1[i].y>50||HP1[i].z>30) {
-		// 		HP1[i].p_type=-1;
-		// 		HP1[i].ux=1.0;
-		// 	}
-		// }
-		// HP1[i].ux=0.0;
-		
-		// if(HP1[i].p_type==1000) HP1[i].i_type=3;
-		//  if(HP1[i].p_type==3) {    // for SNU_IBM (KDH)
-		// 	 if(HP1[i].y>261 || HP1[i].y<16) HP1[i].p_type=-1;
-		// 	 else if(HP1[i].z<4) HP1[i].i_type=3;
-		// 	 else HP1[i].p_type=1;
 		// }
 
 		if(HP1[i].p_type==3) {
@@ -328,115 +130,9 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 				// }
 			}
 		}
-		if(dim==3){
-			if (HP1[i].p_type==1 || HP1[i].p_type==-1){
-				//if (HP1[i].buffer_type==1){
-
-				Real a=0.27;
-				Real z_ref=0.0;
-				Real u_ref=5.0;
-				Real z=0.0;
-
-				switch(terrain_type){
-					case 0:
-						a=0.14;
-						z_ref=2.0;
-						printf("terrain type: flat\n");
-						break;
-					case 1:
-						a=0.19;
-						z_ref=350.0;
-						printf("terrain type: Grass\n");
-						break;
-					case 2:
-						a=0.19;
-						z_ref=350.0;
-						printf("terrain type: Forest\n");
-						break;
-					case 3:
-						a=0.19;
-						z_ref=350.0;
-						//printf("terrain type: City\n");
-						break;
-					case 4:
-						a=0.19;
-						z_ref=350.0;
-						printf("terrain type: Ocean\n");
-						break;
-					default:
-						a=0.19;
-						z_ref=350.0;
-						printf("terrain type: flat\n");
-						break;
-				}
-				if (HP1[i].z>=0) z=HP1[i].z;
-				else z=0.0;
-				//HP1[i].ux=u_ref*pow(z/z_ref,a);
-				//HP1[i].ux=u_ref;
-				//HP1[i].ux=(us_ini/k_vonKarman)*log(HP1[i].z/MOST_z0);
-
-				if (HP1[i].z<0) HP1[i].ux=0.0;
-			}
-			else HP1[i].ux=0.0;
-		}
 		DHP1[c_count]=HP1[i];
 		c_count++;
 	}
-}
-
-void c_initial_velocity(part1*HP1,part1*DHP1,int_t tid){
-
-	int_t c_count=0;
-	Real a=0.0;
-	Real z_ref=0.0;
-
-	switch(terrain_type){
-		case 0:
-			a=0.14;
-			z_ref=300.0;
-			printf("terrain type: flat\n");
-			break;
-		case 1:
-			a=0.19;
-			z_ref=350.0;
-			printf("terrain type: Other\n");
-			break;
-		case 2:
-			a=0.19;
-			z_ref=350.0;
-			printf("terrain type: other\n");
-			break;
-		case 3:
-			a=0.19;
-			z_ref=350.0;
-			printf("terrain type: other\n");
-			break;
-		case 4:
-			a=0.19;
-			z_ref=350.0;
-			printf("terrain type: other\n");
-			break;
-		default:
-			a=0.19;
-			z_ref=350.0;
-			printf("terrain type: flat\n");
-			break;
-	}
-	Real u_ref=10.0;
-
-	for(int_t i=0;i<num_part;i++){
-		// Real z=max(HP1[i].y,0.0);
-		// if(HP1[i].buffer_type==1) HP1[i].ux=u_ref*pow(z/z_ref,a);
-		// else if(HP1[i].p_type==0) HP1[i].ux=0.0;//u_ref*pow(z/z_ref,a);
-		// else HP1[i].ux=u_ref*pow(z/z_ref,a);//u_ref*pow(z/z_ref,a);
-
-		if(HP1[i].p_type==1) HP1[i].ux=1.0;
-		else HP1[i].ux=0.0;
-
-		DHP1[c_count]=HP1[i];
-		c_count++;
-	}
-
 }
 
 void c_initial_inner_outer_particle_single_LDM(L_part1*HLP1,L_part1*DHLP1,int_t tid){
@@ -902,8 +598,8 @@ __global__ void KERNEL_reorder_LDM(int_t*g_idx,int_t*p_idx,int_t*g_str,int_t*g_e
 			if(idx>0) g_end[sharedHash[threadIdx.x]]=idx;
 		//}
 	}
-	// if((idx==k_num_part2-1)&&(hash<k_num_cells)) g_end[hash]=idx+1;
-	if((idx==k_num_part2-1)) g_end[hash]=idx+1;
+	// if((idx==k_num_part_LDM-1)&&(hash<k_num_cells)) g_end[hash]=idx+1;
+	if((idx==k_num_part_LDM-1)) g_end[hash]=idx+1;
 	/*reorder data*/
 	int sortedIndex=p_idx[idx];
 

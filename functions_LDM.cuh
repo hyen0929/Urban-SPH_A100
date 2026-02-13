@@ -16,19 +16,103 @@ __device__ Real GaussianRand(curandState *s, Real mu, Real stdv){
 __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real tend,L_part1*LP1) {
 
 	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
-	double ttend;
-	ttend = tend;
+	if(i>=k_num_part_LDM) return;
+	if(LP1[i].i_type==1) return;
+
 	// if (ttime<=ttend){
 	// 	for(j=k_num_part_LDM*(ttime)/(ttend); j<k_num_part_LDM*(ttime+freq*tdt)/(ttend); j++){
 	// 		LP1[j].i_type=1;
 	// 	}
 	// }
-  if (ttime<=ttend){
-		if(ttime>LP1[i].t_release){
-			LP1[i].i_type=1;
-		}
-	}
 
+	if(ttime>=LP1[i].t_release){
+		LP1[i].i_type=1;
+	}
+}
+
+__global__ void particle_releasing_Dispersion_Gaussian(Real tdt,int freq,Real ttime,Real tend,L_part1*LP1, Real src_radius) {
+
+	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part_LDM) return;
+	if(LP1[i].i_type==1) return;
+
+	if(ttime>=LP1[i].t_release){
+		LP1[i].i_type=1;
+
+		// RNG 초기화
+		unsigned long long time_hash = (unsigned long long)(ttime * 1e6);
+		if(LP1[i].seed < 1){
+			LP1[i].seed = i * 321215 + time_hash + 36893211;
+		}
+		curandState ss;
+		curand_init(LP1[i].seed, 0, 0, &ss);
+
+		// 3σ = src_radius → 99.7% 입자가 반경 내 분포
+		Real sigma = src_radius / 3.0;
+
+		Real dx = GaussianRand(&ss, 0.0, sigma);
+		Real dy = GaussianRand(&ss, 0.0, sigma);
+		Real dz = GaussianRand(&ss, 0.0, sigma);
+
+		// 반경 초과 시 clamp
+		Real dist = sqrt(dx*dx + dy*dy + dz*dz) + 1e-20;
+		if(dist > src_radius){
+			Real scale = src_radius / dist;
+			dx *= scale;
+			dy *= scale;
+			dz *= scale;
+		}
+
+		LP1[i].x += dx;
+		LP1[i].y += dy;
+		LP1[i].z += dz;
+
+		LP1[i].seed = (unsigned long long)curand(&ss);
+	}
+}
+
+__global__ void particle_releasing_Dispersion_Kernel(Real tdt,int freq,Real ttime,Real tend,L_part1*LP1) {
+
+	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part_LDM) return;
+	if(LP1[i].i_type==1) return;
+
+	if(ttime>=LP1[i].t_release){
+		LP1[i].i_type=1;
+
+		// RNG 초기화
+		unsigned long long time_hash = (unsigned long long)(ttime * 1e6);
+		if(LP1[i].seed < 1){
+			LP1[i].seed = i * 321215 + time_hash + 36893211;
+		}
+		curandState ss;
+		curand_init(LP1[i].seed, 0, 0, &ss);
+
+		// SPH 커널 기반 rejection sampling
+		Real h_src = 2.0*LP1[i].h;
+		Real search_range = k_search_kappa * h_src;  // compact support 반경
+		Real tmp_A = calc_tmpA(h_src);
+		Real w_max = calc_kernel_wij(tmp_A, h_src, 1e-20);  // W(0) = peak
+
+		Real dx, dy, dz, dist, wij;
+		for(int iter = 0; iter < 100; iter++){
+			dx = (2.0 * curand_uniform(&ss) - 1.0) * search_range;
+			dy = (2.0 * curand_uniform(&ss) - 1.0) * search_range;
+			dz = (2.0 * curand_uniform(&ss) - 1.0) * search_range;
+			dist = sqrt(dx*dx + dy*dy + dz*dz);
+
+			if(dist >= search_range) continue;
+
+			wij = calc_kernel_wij(tmp_A, h_src, dist);
+			if(curand_uniform(&ss) < wij / w_max) break;  // accept
+		}
+
+		LP1[i].x += dx;
+		LP1[i].y += dy;
+		LP1[i].z += dz;
+
+		LP1[i].seed = (unsigned long long)curand(&ss);
+	}
 }
 
 __global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,L_part2*LP2)

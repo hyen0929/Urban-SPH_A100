@@ -637,7 +637,7 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 						yj=P1[j].y;
 						zj=P1[j].z;
 						hj=P1[j].h;
-						tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))-1e-20;
+						tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 						search_range=k_search_kappa*fmax(hi,hj);
 
 						if(P1[j].p_type<1000){
