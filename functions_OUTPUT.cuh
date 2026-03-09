@@ -632,7 +632,8 @@ void save_vtk_bin_single_fluid_condition(part1*P1,part2*P2,part3*P3)
 	int_t *plot_flag;
 	plot_flag = (int*)malloc(sizeof(int)*nop);
 	//for(i=0;i<nop;i++) if(P1[i].x>0) Nparticle++;
-	for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&P1[i].y>=0) {
+	Real umag=sqrt(P1[i].ux*P1[i].ux+P1[i].uy*P1[i].uy+P1[i].uz*P1[i].uz);
+	for(i=0;i<nop;i++) if(((P1[i].i_type==1)||(P1[i].i_type==2))&&umag>15.0) {
 	//for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2) && P1[i].x>0.6 && P1[i].x<1.0 && P1[i].y<0.2 && P1[i].y>-0.2 && P1[i].z<0.25) {
 	//for(i=0;i<nop;i++) if((P1[i].i_type==1||P1[i].i_type==2) && P1[i].p_type==1 && P1[i].z<50.0) {
 		Nparticle++;
@@ -686,6 +687,17 @@ void save_vtk_bin_single_fluid_condition(part1*P1,part2*P2,part3*P3)
 				//if(P1[i].x>0){
 				if(plot_flag[i]==1){
 					valt=IntSwap(P1[i].buffer_type);
+					fwrite((void*)&valt,sizeof(int),1,outFile_vtk);
+				}
+			}
+		}
+
+		if (!strncmp(data_label,"MOST_buffer",8)) {
+			fprintf(outFile_vtk,"M_buffer\t1\t%d\tint\n",Nparticle);
+			for(i=0;i<nop;i++){
+				//if(P1[i].x>0){
+				if(plot_flag[i]==1){
+					valt=IntSwap(P1[i].MOST_buffer);
 					fwrite((void*)&valt,sizeof(int),1,outFile_vtk);
 				}
 			}

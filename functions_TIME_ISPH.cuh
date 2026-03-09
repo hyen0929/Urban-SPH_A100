@@ -45,7 +45,11 @@ __global__ void KERNEL_clc_projection(int_t tcount, Real tdt,Real ttime,part1*P1
 			// tduy_dt0=P3[i].ftotaly*(buffer_type==0)+P1[i].fby/P1[i].rho*(buffer_type==0);									// initial y-directional acceleration
 			// tduz_dt0=P3[i].ftotalz*(buffer_type==0)+P1[i].fbz/P1[i].rho*(buffer_type==0);									// initial z-directional acceleration
 
-			tdux_dt0=P3[i].ftotalx*(buffer_type==0||MOST==1)+P1[i].fmx;									// initial x-directional acceleration
+			// Geostrophic pressure gradient: balances MOST surface friction for steady ABL
+			Real f_geo = MOST_boundary * (us_ini * us_ini / ABL_h);
+			tdux_dt0=P3[i].ftotalx*(buffer_type==0||MOST==1)+P1[i].fmx+f_geo*(buffer_type==0||MOST==1);									// initial x-directional acceleration
+
+			//tdux_dt0=P3[i].ftotalx*(buffer_type==0||MOST==1)+P1[i].fmx;									// initial x-directional acceleration
 			tduy_dt0=P3[i].ftotaly*(buffer_type==0||MOST==1)+P1[i].fmy;									// initial y-directional acceleration
 			tduz_dt0=P3[i].ftotalz*(buffer_type==0||MOST==1);									// initial z-directional acceleration
 
@@ -169,8 +173,8 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 			// duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fby/P1[i].rho+P1[i].fmy;			// y-directional acceleration
 			// duz_dt=P3[i].fpz*(buffer_type==0)+P1[i].fbz/P1[i].rho;			// z-directional acceleration
 
-			dux_dt=P3[i].fpx*(buffer_type==0)+P1[i].fmx;			// x-directional acceleration
-			duy_dt=P3[i].fpy*(buffer_type==0)+P1[i].fmy;			// y-directional acceleration
+			dux_dt=P3[i].fpx*(buffer_type==0);			// x-directional acceleration (pressure only)
+			duy_dt=P3[i].fpy*(buffer_type==0);			// y-directional acceleration (pressure only)
 			duz_dt=P3[i].fpz*(buffer_type==0);			// z-directional acceleration
 		}
 		else{
@@ -198,10 +202,18 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 		yc=ty0+(P2[i].uy0+uyc)/2.0*(t_dt)*(p_type_i>0)*(P1[i].eli);												// correct Y-directional position
 		zc=tz0+(P2[i].uz0+uzc)/2.0*(t_dt)*(p_type_i>0)*(P1[i].eli);
 		
-		TP1[i].ux=uxc;														// update x-directional velocity
-		TP1[i].uy=uyc;														// update y-directional velocity
-		TP1[i].uz=uzc;														// update z-directional velocity
-  }
+		Real umag=sqrt(uxc*uxc+uyc*uyc+uzc*uzc);
+		if(umag>k_u_limit){
+			TP1[i].ux=uxc*k_u_limit/umag;														// update x-directional velocity
+		   	TP1[i].uy=uyc*k_u_limit/umag;														// update y-directional velocity
+			TP1[i].uz=uzc*k_u_limit/umag;														// update z-directional velocity
+		}
+		else{
+			TP1[i].ux=uxc;														// update x-directional velocity
+		   	TP1[i].uy=uyc;														// update y-directional velocity
+			TP1[i].uz=uzc;														// update z-directional velocity
+		}
+   }
 
 	//update_properties_enthalpy-------------------------------
 	if((k_con_solve==1)){

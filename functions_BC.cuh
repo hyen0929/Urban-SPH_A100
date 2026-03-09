@@ -8,7 +8,7 @@ __global__ void KERNEL_boundary3D(int_t*g_str,int_t*g_end,part1*P1)
 	int_t icell,jcell,kcell;
 	uint_t p_type_i;
 	p_type_i=P1[i].p_type;
-	if(p_type_i>0) return;
+	if(p_type_i!=0) return;
 
 	Real xi,yi,zi,uxi,uyi,uzi;
 	Real search_range,hi,tmp_A;
@@ -1610,7 +1610,7 @@ __global__ void KERNEL_Recycling3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,par
 		// P1[i].ux=tux;
 		// P1[i].uy=tuy;
 		// P1[i].uz=tuz;
-		P1[i].ux=(us_update/k_vonKarman)*log(P1[i].z/MOST_z0);
+		P1[i].ux=(us_update/k_vonKarman)*logf(fmaxf(P1[i].z, MOST_z0)/MOST_z0);
 
 		// P1[i].ux_f=0.1*tux;
 		// P1[i].uy_f=tuy;

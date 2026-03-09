@@ -148,7 +148,7 @@ __device__ float clamp(float x, float minVal, float maxVal) {
     return fmaxf(minVal, fminf(x, maxVal));
 }
 // Stability functions (Psi functions) for momentum and heat
-__device__ double psi_m(Real zeta) {
+__device__ Real psi_m(Real zeta) {
     if (zeta < 0.0f) {
         Real x = sqrtf(sqrtf(1.0f - 16.0f * zeta));
         return M_PI * 0.5f - 2.0f * atanf(x) + logf((1.0f + x) * (1.0f + x) * (1.0f + x * x) * 0.125f);
@@ -156,7 +156,7 @@ __device__ double psi_m(Real zeta) {
     return -5.0f * zeta;
 }
 
-__device__ double psi_h(Real zeta) {
+__device__ Real psi_h(Real zeta) {
     if (zeta < 0.0f) {
         return 2.0f * logf(0.5f * (1.0f + sqrtf(1.0f - 16.0f * zeta)));
     }
@@ -164,19 +164,18 @@ __device__ double psi_h(Real zeta) {
 }
 
 // Integrated stability functions (Phi functions) for momentum and heat
-__device__ double Phi_m(Real L, Real z, Real z0) {
+__device__ Real Phi_m(Real L, Real z, Real z0) {
     return logf(z/z0)-psi_m(z/L)+psi_m(z0/L);
 }
 
-__device__ double Phi_h(Real L, Real z, Real z0h) {
+__device__ Real Phi_h(Real L, Real z, Real z0h) {
     return logf(z/z0h)-psi_h(z/L)+psi_h(z0h/L);
 }
 
-__global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3*P3, int_t tcount, Real tdt) {
+__global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3*P3, int_t tcount, Real tdt, int_t apply_heat) {
     uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
     if(i>=k_num_part2) return;
     if(P1[i].MOST_buffer!=1) return;
-    // if(P1[i].buffer_type!=0) return;      // Inlet/Outlet second layer 제외
 
     // Particle properties
     int_t icell,jcell,kcell;
@@ -198,7 +197,6 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     Real theta_star = 0.0;
     Real OB_length;
     int iter=0;
-    int skip_flag=0;
 
     Real theta_surface;
     if(tdt*tcount>=T_start_t && tdt*tcount<T_con_t) theta_surface=T_ini+tdt*tcount*(T_con-T_ini)/(T_con_t-T_start_t);
@@ -214,15 +212,11 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
 
     Real Ri_b = (Gravitational_CONST/tempi)*(tempi-theta_surface)*zi / (wind_speed*wind_speed+1e-10);
     // Initialize Obukhov length with a small value
-    if(abs(Ri_b)>1e-3){
-      OB_length = zi / Ri_b;  // Ri = z/L → L ≈ z / Ri
-      OB_length = clamp(OB_length, -500.0, 500.0);  // 실측 기반 제한
+    if(fabsf(Ri_b)>1e-3f){
+      OB_length = zi / Ri_b;
+      OB_length = clamp(OB_length, -500.0f, 500.0f);
 
-      //if (P1[i].x>19&&P1[i].x<21&&P1[i].y>4&&P1[i].y<6) printf("Ri_b=%f, z0=%f, z0h=%f, OB_length=%f, wind=%f\n",Ri_b,z0,z0h,OB_length,wind_speed);
-      // Newton iteration for OB_length using Rib
-      if (tcount%10==0 && (P1[i].x>5&&P1[i].x<10&&P1[i].y>4&&P1[i].y<6)) printf("Initial L=%f Wind_speed=%f\n",OB_length,wind_speed);
       for (iter=0; iter<MAX_ITER; iter++) {
-        if(skip_flag==1) break;
         ol_m = OB_length;
         ol_l = 0.999*ol_m;          // Perturbation: L-dL
         ol_u = 1.001*ol_m;          // Perturbation: L+dL
@@ -230,17 +224,17 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
         Real fL = Ri_b-(zi/ol_m)*Phi_h(ol_m,zi,z0h) / powf(Phi_m(ol_m,zi,z0),2);              //  f(L) = Ri_b - Ri_MOST
         Real dfL = ((-(zi/ol_u)*Phi_h(ol_u,zi,z0h)/(Phi_m(ol_u,zi,z0)*Phi_m(ol_u,zi,z0))) - (-(zi/ol_l)*Phi_h(ol_l,zi,z0h)/(Phi_m(ol_l,zi,z0)*Phi_m(ol_l,zi,z0))) ) / (ol_u-ol_l);              // f'(L) = (f(L+dL) - f(L-dL))/2dL
 
+        if(fabsf(dfL) < 1e-10f) break;
         OB_length -= damping * fL/dfL;
-        // if ((P1[i].x>19&&P1[i].x<21&&P1[i].y>4&&P1[i].y<6)&&iter==0 ) printf("ol_m=%f, ol_l=%f, ol_u=%f, fl=%f, dfl=%f\n",ol_m, ol_l, ol_u, fL, dfL);
+        OB_length = clamp(OB_length, -500.0f, 500.0f);
 
-        if (fabsf(OB_length) > 1e-6){
+        if (fabsf(OB_length) > 1e-6f){
           if (fabsf((OB_length - ol_m) / OB_length) < TOLERANCE) break;
           else{
             if (fabsf(OB_length - ol_m) < TOLERANCE) break;
           }
         }
       }
-      if (tcount%10==0 && (P1[i].x>0&&P1[i].x<10&&P1[i].y>4&&P1[i].y<6)) printf("Ri=%f, Iter=%d, L=%f\n",Ri_b,iter,OB_length);
 
       // Calculate friction velocity (u*) using updated OB_length, Calculate temperature scale (theta*)
       u_star = k_vonKarman*wind_speed / Phi_m(OB_length,zi,z0);
@@ -257,13 +251,13 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     float momentum_y = -rhoi*u_star*(uyi*u_star/wind_speed);        // N/m2 (kg/ms2)
 
     // Calculate surface fluxes
-    Real sensible_heat_flux = -rhoi*Air_cp*u_star*theta_star*100.0;      // W/m2(J/m2s)
+    Real sensible_heat_flux = -rhoi*Air_cp*u_star*theta_star;      // W/m2(J/m2s)
 
     // calculate ghost node
     Real xgnode_i, ygnode_i, zgnode_i;
   	xgnode_i=xi;
   	ygnode_i=yi;
-  	zgnode_i=zi+5.0;
+  	zgnode_i=zi+2.0f*space;
 
     // calculate I,J,K in cell
   	if((k_x_max==k_x_min)){icell=0;}
@@ -290,13 +284,10 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
               yj=P1[j].y;
               zj=P1[j].z;
 
-              tdist=sqrt((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj))-1e-20;
-              if(tdist<0.1){
-                // P1[j].fmx = 0.0*momentum_x*space*space/mi;       // *A/m (m/s2)
-                // P1[j].fmy = 0.0*momentum_y*space*space/mi;
-                // P1[j].vis_t = 0.4*k_vonKarman*u_star*(zi-0.0);
-                P3[j].dtemp += 0.5*sensible_heat_flux/(space*rhoi*Air_cp);
-                P1[j].hmz = 0.5*sensible_heat_flux/(space*rhoi*Air_cp);;
+              tdist=sqrtf((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj));
+              if(tdist<0.3f*space){
+                if(apply_heat) P3[j].dtemp += 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
+                if(apply_heat) P1[j].hmz = 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
               }
             }
           }
@@ -304,16 +295,15 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
       }
     }
 
-    P1[i].fmx = 1.0*momentum_x*space*space/mi;       // *A/m (m/s2)
-    P1[i].fmy = 1.0*momentum_y*space*space/mi;
+    P1[i].fmx = momentum_x*space*space/mi;
+    P1[i].fmy = momentum_y*space*space/mi;
 
-    //P1[i].vis_t += k_vonKarman*u_star*(zi-0.0)*rhoi;
+    if(apply_heat) P3[i].dtemp += 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
+    if(apply_heat) P1[i].hmz = 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
 
-    P3[i].dtemp += 0.5*sensible_heat_flux/(space*rhoi*Air_cp);
-
-    P1[i].hmz = 0.5*sensible_heat_flux/(space*rhoi*Air_cp);
-
-    if((xi-600.0)*(xi-600.0)+yi*yi<1e-3) us_update=u_star;
+    // Update reference friction velocity at domain midpoint
+    Real x_ref = 0.5f*(L_MOST_x0 + L_MOST_xmax);
+    if((xi-x_ref)*(xi-x_ref)+yi*yi<1e-3) us_update=u_star;
 
     // Store results in particle
     // P1[i].float1 = u_star;
@@ -321,59 +311,17 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     // P1[i].float3 = OB_length;
 }
 
-__global__ void KERNEL_turbulent_viscosity3D(int_t*g_str, int_t*g_end, part1*P1, part3*P3, int_t tcount, Real tdt) {
+// MOST-prescribed eddy viscosity: ν_t(z) = κ u* z (1 - z/h)
+// Applied to all fluid particles, ensures proper vertical momentum transport
+__global__ void KERNEL_turbulent_viscosity3D(part1*P1) {
     uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
     if(i>=k_num_part2) return;
-    if(P1[i].p_type!=1) return;      // Inlet/Outlet second layer 제외
+    if(P1[i].p_type!=1) return;
+    if(P1[i].buffer_type==1) return;   // Skip inlet buffer
 
-    // Particle properties
-    int_t icell,jcell,kcell;
-    Real xi = P1[i].x;
-    Real yi = P1[i].y;
     Real zi = P1[i].z;
-    Real rhoi = P1[i].rho;
+    if(zi >= ABL_h || zi <= 0.0f) return;
 
-    Real u_star=0.0;
-    // calculate ghost node
-    Real xgnode_i, ygnode_i, zgnode_i;
-  	xgnode_i=600.0;
-  	ygnode_i=0.0;
-  	zgnode_i=2.5;
-
-    // calculate I,J,K in cell
-  	if((k_x_max==k_x_min)){icell=0;}
-  	else{icell=min(floor((xgnode_i-k_x_min)/k_dcell),k_NI-1);}
-  	if((k_y_max==k_y_min)){jcell=0;}
-  	else{jcell=min(floor((ygnode_i-k_y_min)/k_dcell),k_NJ-1);}
-  	if((k_z_max==k_z_min)){kcell=0;}
-  	else{kcell=min(floor((zgnode_i-k_z_min)/k_dcell),k_NK-1);}
-
-  	// out-of-range handling
-  	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
-
-  	for(int_t z=-1;z<=1;z++){
-  		for(int_t y=-1;y<=1;y++){
-  			for(int_t x=-1;x<=1;x++){
-  				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
-  				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
-  				if(g_str[k]!=cu_memset){
-  					int_t fend=g_end[k];
-  					for(int_t j=g_str[k];j<fend;j++){
-  						Real xj,yj,zj,tdist;
-
-              xj=P1[j].x;
-              yj=P1[j].y;
-              zj=P1[j].z;
-
-              tdist=sqrt((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj))-1e-20;
-              if(tdist<0.1){
-                // u_star=P1[j].float1;
-              }
-            }
-          }
-        }
-      }
-    }
-    //P1[i].vis_t += k_vonKarman*u_star*(zi-0.0)*rhoi*(1-zi/ABL_h)*(1-zi/ABL_h)*(zi<ABL_h);
-    //P1[i].vis_t += k_vonKarman*u_star*(zi-0.0)*rhoi*(zi<ABL_h);
+    Real nut_most = k_vonKarman * us_update * zi * (1.0f - zi/ABL_h);
+    P1[i].vis_t = fmaxf(P1[i].vis_t, nut_most);
 }

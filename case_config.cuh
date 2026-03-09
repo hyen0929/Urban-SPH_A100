@@ -5,7 +5,7 @@
 // Case selector
 // ============================================================
 #ifndef CASE_ID
-#define CASE_ID 2002
+#define CASE_ID 1010
 #endif
 
 // ============================================================
@@ -17,6 +17,7 @@
 //   - Multi block 계열: 301 ...
 //   - Leipzig 계열: 1001 ...
 //   - Transport test 계열: 2001 ...
+//   - MOST Validation 계열: 3001 ...
 // ============================================================
 
 #if CASE_ID == 101
@@ -131,10 +132,11 @@
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
-#elif CASE_ID == 1001
 // ------------------------------------------------------------
 // Leipzig (dx=2.5m)
-// ------------------------------------------------------------
+// ------------------------------------------------------------  
+#elif CASE_ID == 1001
+
   #define L1  -900.0
   #define L2  -817.5
   #define L3  2200.0
@@ -147,10 +149,11 @@
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
+// ------------------------------------------------------------
+// Leipzig (Point surface input, dx=2.5m)
+// ------------------------------------------------------------  
 #elif CASE_ID == 1002
-// ------------------------------------------------------------
-// Leipzig (Point input, dx=2.5m)
-// ------------------------------------------------------------
+
   #define L1  0.0
   #define L2  8.75
   #define L3  2200.0
@@ -163,10 +166,11 @@
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
-#elif CASE_ID == 1003
 // ------------------------------------------------------------
 // Leipzig (Point input, dx=2.5m, small)
 // ------------------------------------------------------------
+#elif CASE_ID == 1003
+
   #define L1  0.0
   #define L2  8.75
   #define L3  2200.0
@@ -177,6 +181,57 @@
   #define L_ceiling 15463.75
 
   #define L_MOST_x0   0.0
+  #define L_MOST_xmax 1990.0
+
+// ------------------------------------------------------------
+// Leipzig (Interior input, dx=2.5m)
+// ------------------------------------------------------------
+  #elif CASE_ID == 1004
+
+  #define L1  0.0
+  #define L2  8.75
+  #define L3  2200.0
+  #define L4  2210.0
+
+  #define L_left   -648.75
+  #define L_right   648.75
+  #define L_ceiling 15463.75
+
+  #define L_MOST_x0   15.0
+  #define L_MOST_xmax 5990.0
+
+// ------------------------------------------------------------
+// Leipzig (Interior input, small, dx=2.5m)
+// ------------------------------------------------------------
+  #elif CASE_ID == 1005
+
+  #define L1  0.0
+  #define L2  8.75
+  #define L3  2200.0
+  #define L4  2210.0
+
+  #define L_left   -243.75
+  #define L_right   243.75
+  #define L_ceiling 15463.75
+
+  #define L_MOST_x0   15.0
+  #define L_MOST_xmax 1990.0
+
+// ------------------------------------------------------------
+// Gori (Surface input, dx=5.0m)
+// ------------------------------------------------------------
+  #elif CASE_ID == 1010
+
+  #define L1  0.0
+  #define L2  17.5
+  #define L3  3200.0
+  #define L4  3210.0
+
+  #define L_left   -1272.5
+  #define L_right   1272.5
+  #define L_ceiling 15463.75
+
+  #define L_MOST_x0   15.0
   #define L_MOST_xmax 1990.0
 
 // ------------------------------------------------------------
@@ -210,6 +265,20 @@
 
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
+
+  #elif CASE_ID == 3001   // MOST Validation (flat terrain, dx=2.5m)
+
+  #define L1  0.0
+  #define L2  8.75
+  #define L3  1000.0
+  #define L4  1000.0
+
+  #define L_left   -53.75
+  #define L_right   53.75
+  #define L_ceiling 363.75
+
+  #define L_MOST_x0   10.0      // Past inlet buffer (L2=8.75)
+  #define L_MOST_xmax 500.0     // Fluid domain end
 
 
 #else

@@ -338,7 +338,7 @@ __global__ void KERNEL_apply_source_concn(part1* P1, Real tdt, Real cx, Real cy,
     }
 }
 
-__global__ void KERNEL_apply_source_concn_Gaussian(part1* P1, Real tdt, Real cx, Real cy, Real cz, Real radius, Real intensity)
+__global__ void KERNEL_apply_source_concn_Gaussian(part1* P1, Real tdt, Real cx, Real cy, Real cz, Real sigma, Real intensity)
 {
     uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
     if (i >= k_num_part2) return;
@@ -349,18 +349,13 @@ __global__ void KERNEL_apply_source_concn_Gaussian(part1* P1, Real tdt, Real cx,
     Real dx = P1[i].x-cx;
     Real dy = P1[i].y-cy;
     Real dz = P1[i].z-cz;
-    Real dist = sqrt(dx*dx+dy*dy+dz*dz)+1e-20;
+    Real r2 = dx*dx+dy*dy+dz*dz;
 
-    // radius = 커널 compact support 반경, h_src = smoothing length
-    Real h_src = radius/k_search_kappa;
-    h_src = 2.0*P1[i].h;
-    Real tmp_A = calc_tmpA(h_src);
-    Real search_range = k_search_kappa * h_src;
-
-    if (dist < search_range){
-        Real wij = calc_kernel_wij(tmp_A, h_src, dist);
-        // SPH 정규화: Σ_j V_j·W ≈ 1 → 총 스칼라 질량 ≈ intensity
-        P1[i].concn += intensity * wij;
+    // True Gaussian: exp(-r²/(2σ²)), cutoff at 4σ
+    Real cutoff = 4.0*sigma;
+    if (r2 < cutoff*cutoff){
+        Real val = exp(-r2/(2.0*sigma*sigma));
+        P1[i].concn += intensity * val;
         P1[i].source = 1;
     }
 }

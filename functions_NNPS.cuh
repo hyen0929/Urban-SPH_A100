@@ -30,7 +30,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			HP1[i].k_turb=Interpolate_k_caseA(HP1[i].z,scale_factor);
 		}
 		if(CASE_ID>200 && CASE_ID<300) {
-			scale_factor=0.005;
+			scale_factor=0.08;
 			HP1[i].ux=Interpolate_ux_caseA(HP1[i].z,scale_factor);
 			//HP1[i].k_turb=Interpolate_k_caseC(HP1[i].z,scale_factor);
 		}
@@ -40,12 +40,17 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			//HP1[i].k_turb=Interpolate_k_caseC(HP1[i].z,scale_factor);
 		}
 		if(CASE_ID>1000 && CASE_ID<1100) {
-			//HP1[i].ux=Interpolate_ux_ABL(HP1[i].z);
-			HP1[i].ux=1.5*Interpolate_ux_caseA(HP1[i].z,0.08);
+			HP1[i].ux=Interpolate_ux_ABL(HP1[i].z);
+			//HP1[i].ux=1.5*Interpolate_ux_caseA(HP1[i].z,0.08);
 			HP1[i].k_turb=0.0;
 		}
 		if(CASE_ID==2001) HP1[i].ux=0.0;	// Scalar transport test
 		if(CASE_ID==2002) HP1[i].ux=0.3;	// Scalar transport test with advection
+		if(CASE_ID==3001) {	// MOST validation test
+			HP1[i].ux=Interpolate_ux_MOST_Neutral(HP1[i].z);
+			HP1[i].k_turb=Interpolate_k_MOST_Neutral(HP1[i].z);
+		}
+
 		// // Inner building particle ux=0.0
 		// if(HP1[i].p_type==1 && zi<0.2){
 		// 	if(xi>1.0 && xi<1.2 && yi>-0.5 && yi<-0.3) HP1[i].ux=0.0;
@@ -67,10 +72,23 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			HP1[i].p_type=1;
 		}
 
+		// Interior fluid flag: p_type=99 from Python preprocessing → buffer_type=99
+		if(HP1[i].p_type==99) {
+			//HP1[i].buffer_type=99;
+			HP1[i].p_type=1;
+			// HP1[i].ux=0.0;
+			// HP1[i].uy=0.0;
+			// HP1[i].uz=0.0;
+		}
+
 		if(HP1[i].p_type==0||HP1[i].p_type==1000) {
 			//HP1[i].i_type=2;
 			HP1[i].rho=1.225;
 			HP1[i].rho=1.225;
+		}
+
+		if(HP1[i].p_type==1000){
+			HP1[i].x=HP1[i].x+1.25;
 		}
 
 		if (open_boundary>0)			// (CAUTION)
@@ -103,10 +121,9 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 					HP1[i].buffer_type=5;
 				}
 
-				// if(HP1[i].buffer_type<3 && HP1[i].x>L_MOST_x0 && HP1[i].x<L_MOST_xmax){
-				// 	if(HP1[i].z<=5.0) HP1[i].MOST_buffer=1;
-				// 	else if(HP1[i].z<=10.0) HP1[i].MOST_buffer=2;
-				// }
+				if(HP1[i].p_type==1 && HP1[i].x>L_MOST_x0 && HP1[i].x<L_MOST_xmax && HP1[i].z>2.4f && HP1[i].z<2.6f){
+					HP1[i].MOST_buffer=1;
+				}
 
 				// else if((HP1[i].x>=L2-1e-6)&&(HP1[i].x<L3)) {   // Only buffer 1 for ESPH
 				// 	HP1[i].buffer_type=0;

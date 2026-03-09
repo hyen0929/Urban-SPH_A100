@@ -112,6 +112,8 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	if(count==0){
 		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 		cudaDeviceSynchronize();
+		// KERNEL_detect_interior_fluid3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
+		// cudaDeviceSynchronize();
 	}
 	gradient_correction(g_str,g_end,dev_SP1,dev_P3);
 	cudaDeviceSynchronize();
@@ -129,13 +131,13 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaDeviceSynchronize();
 	}
 
-	b.x=(num_part2-1)/t.x+1;
-	KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
-	cudaDeviceSynchronize();
-
-	// b.x=(num_part2-1)/t.x+1;
-	// if(dim==3) KERNEL_turbulent_viscosity3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
-	// cudaDeviceSynchronize();
+	if(MOST_boundary){
+		b.x=(num_part2-1)/t.x+1;
+		KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt,1);
+		cudaDeviceSynchronize();
+		// KERNEL_turbulent_viscosity3D<<<b,t>>>(dev_SP1);
+		// cudaDeviceSynchronize();
+	}
 
 	if(count==0){
 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
@@ -149,6 +151,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	b.x=(num_part2-1)/t.x+1;
 	KERNEL_advection_force3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
 	cudaDeviceSynchronize();
+
 
 //-------------------------------------------------------------------------------------------------
 // PREDICTOR (Optional)
@@ -187,6 +190,10 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	IBM_corrector_fluid<<<b,t>>>(dt,time,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
+	// Zero velocity for interior fluid particles (inside buildings)
+	// KERNEL_zero_interior_velocity<<<b,t>>>(dev_SP1);
+	// cudaDeviceSynchronize();
+
 //-------------------------------------------------------------------------------------------------
 // 압력 계산
 //-------------------------------------------------------------------------------------------------
@@ -204,12 +211,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaDeviceSynchronize();
 	}
 
-	// 	// Pressure condition for outlet(Donothing boundary, Neumann boundary)
-	// 	KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// 	//KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// 	//KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// 	cudaDeviceSynchronize();
-
 //-------------------------------------------------------------------------------------------------
 // 압력힘 계산
 //-------------------------------------------------------------------------------------------------
@@ -218,26 +219,20 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	KERNEL_pressureforce3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
-	if(MOST_boundary){
-		b.x=(num_part2-1)/t.x+1;
-		KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt);
-		cudaDeviceSynchronize();
-	}
-
-	// b.x=(num_part2-1)/t.x+1;
-	// IBM_force_interpolation3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// cudaDeviceSynchronize();
-
-	// // IBM spreading interpolation (fb for fluid)
-	// IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// cudaDeviceSynchronize();
-
 //-------------------------------------------------------------------------------------------------
 // 시간 적분 (Time Integration)
 //-------------------------------------------------------------------------------------------------
 	b.x=(num_part2-1)/t.x+1;
 	KERNEL_time_update_projection<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	cudaDeviceSynchronize();
+
+	// // Zero interior velocity after time integration
+	// KERNEL_zero_interior_velocity<<<b,t>>>(dev_P1);
+	// cudaDeviceSynchronize();
+
+	// // Monitor target particle (once per step, after all forces applied)
+	// KERNEL_monitor_particle<<<b,t>>>(dev_P1, dev_P3, count, 4);
+	// cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // Open Boudnary && APR
@@ -275,15 +270,25 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		// Main kernel now includes all enhanced features when USE_LDM_ENHANCED_TURBULENCE is defined
 		b.x=(num_part_LDM-1)/t.x+1;
 		if(CASE_ID<2000)KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
-		if(CASE_ID>2000)KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
-		if(CASE_ID<2000)KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
+		else if(CASE_ID>2000)KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+
+		// LDM verification: U_mean = 0.3 m/s, D = 0.01 m^2/s
+		// Case 1 (pure diffusion):     U_mean=0.0, D=0.01
+		// Case 2 (pure advection):     U_mean=0.3, D=0.0
+		// Case 3 (advection+diffusion): U_mean=0.3, D=0.01
+		if(CASE_ID>2000){
+			Real LDM_U_mean = 0.3;   // <-- 변경: 0.0 for Case 1
+			Real LDM_D      = 0.01;  // <-- 변경: 0.0 for Case 2
+			KERNEL_time_update_LDM_test<<<b,t>>>(freq_LDM*dt,time,dev_LP1,dev_LP2,LDM_U_mean,LDM_D);
+		}
+		KERNEL_clc_concentration<<<b,t>>>(g_str_LDM,g_end_LDM,dev_LP1);
 		cudaDeviceSynchronize();
 	}
 
 	if (CASE_ID>2000){
 
         b.x=(num_part2-1)/t.x+1;
-        Real src_x=5.0, src_y=0.0, src_z=3.0, src_r=0.05, src_val=1e5;
+        Real src_x=5.0, src_y=0.0, src_z=3.0, src_r=0.183, src_val=1e5;  // src_r = σ, matched to LDM σ₀
 
         if(count==0)KERNEL_apply_source_concn_Gaussian<<<b,t>>>(dev_P1,dt,src_x,src_y,src_z,src_r,src_val);
         cudaDeviceSynchronize();
@@ -293,8 +298,13 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
         // Scalar transport sub-cycling: freq_scalar 스텝에 1번, dt를 그만큼 키워서 호출
         int freq_scalar = 10;
         if(count % freq_scalar == 0){
+            Real sdt = freq_scalar*dt;
             b.x=(num_part2-1)/t.x+1;
-            KERNEL_advect_concn_SL<<<b,t>>>(g_str, g_end, dev_P1, dev_P3, diffusion_coeff, freq_scalar*dt);
+
+            // BiMacCormack 2-pass: forward SL → correct with backward error
+            KERNEL_BiMC_forward<<<b,t>>>(g_str, g_end, dev_P1, dev_P3, sdt);
+            cudaDeviceSynchronize();
+            KERNEL_BiMC_correct<<<b,t>>>(g_str, g_end, dev_P1, dev_P3, diffusion_coeff, sdt);
             cudaDeviceSynchronize();
 
             b.x=(num_part2-1)/t.x+1;
@@ -319,9 +329,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
-		if(count%100==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
-		if(CASE_ID>2000)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
-		if(CASE_ID<2000)save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
+		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
+		if(count%100==0)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
+		
 		
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
@@ -331,6 +341,10 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	if(CASE_ID<2004 && count%100==0){
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);
+	}
+
+	if(count%25==0){
+		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
 	}
 }
 

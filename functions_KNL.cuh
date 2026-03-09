@@ -189,12 +189,12 @@ __global__ void KERNEL_clc_gradient_correction_3D(int_t*g_str,int_t*g_end,part1*
 							tzz*=rtd;
 
 							// Origianl (CTS)
-							tmpxx+=txx*(ptype_j==1);
-							tmpxy+=txy*(ptype_j==1);
-							tmpyy+=tyy*(ptype_j==1);
-							tmpzx+=tzx*(ptype_j==1);
-							tmpyz+=tyz*(ptype_j==1);
-							tmpzz+=tzz*(ptype_j==1);
+							// tmpxx+=txx*(ptype_j==1);
+							// tmpxy+=txy*(ptype_j==1);
+							// tmpyy+=tyy*(ptype_j==1);
+							// tmpzx+=tzx*(ptype_j==1);
+							// tmpyz+=tyz*(ptype_j==1);
+							// tmpzz+=tzz*(ptype_j==1);
 
 							// Test (KDH)
 							// tmpxx+=txx;
@@ -203,6 +203,15 @@ __global__ void KERNEL_clc_gradient_correction_3D(int_t*g_str,int_t*g_end,part1*
 							// tmpzx+=tzx;
 							// tmpyz+=tyz;
 							// tmpzz+=tzz;
+
+							// Include fluid + boundary for full kernel support (KDH)
+							Real incl = (ptype_j==1 || ptype_j==-1 || ptype_j==0);
+							tmpxx+=txx*incl;
+							tmpxy+=txy*incl;
+							tmpyy+=tyy*incl;
+							tmpzx+=tzx*incl;
+							tmpyz+=tyz*incl;
+							tmpzz+=tzz*incl;
 						}
 					}
 				}
@@ -215,7 +224,8 @@ __global__ void KERNEL_clc_gradient_correction_3D(int_t*g_str,int_t*g_end,part1*
 	tmpcmd-=tmpxy*(tmpxy*tmpzz-tmpyz*tmpzx);
 	tmpcmd+=tmpzx*(tmpxy*tmpyz-tmpyy*tmpzx);
 
-	if((abs(tmpcmd)>DBL_EPSILON)&&(ptype_i==1)){
+	// if((abs(tmpcmd)>DBL_EPSILON)&&(ptype_i==1)){   // Original (CTS)
+	if((abs(tmpcmd)>Min_det)&&(ptype_i==1)){          // Min_det threshold (KDH)
 		Real rtcmd=1.0/tmpcmd;
 		P3[i].inv_cm_xx=(tmpyy*tmpzz-tmpyz*tmpyz)*rtcmd;
 		P3[i].inv_cm_xy=(tmpzx*tmpyz-tmpxy*tmpzz)*rtcmd;

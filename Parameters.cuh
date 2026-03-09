@@ -34,23 +34,23 @@
 #define 	Cs_SPS					0.12			// check please (by esk)
 #define 	CI_SPS					0.00066
 #define 	L_SPS					0.01			// scale of length scale (for test)
-#define   C_pres        0.2       // Pressure_smoothing_coefficient
+#define     C_pres                  0.2       // Pressure_smoothing_coefficient
 
 // viscous model
 #define     Cleary                  1
 #define     Monaghan                2
 #define     Violeau                  3
 
-#define 	Lm						0.01
-#define 	Laminar					0
-#define 	K_LM					1
-#define 	K_E						2
+#define 	Lm					0.01
+#define 	Laminar				0
+#define 	K_LM				1
+#define 	K_E					2
 #define 	HB      			3
-#define   SSM           4
-#define   DDF           5
+#define     SSM                 4
+#define     DDF                 5
 
 #define 	DIFF_DENSITY		    0
-#define   Correction_Matrix_Size  3
+#define     Correction_Matrix_Size  3
 
 #define 	KGC		    1
 #define 	FPM		    2
@@ -71,7 +71,7 @@
 #define Lagrangian  1
 #define ALE 2
 
-#define Boundary_Velocity 1.0 // No-slip condition for moving boundary
+#define Boundary_Velocity 0.0 // No-slip condition for moving boundary
 
 /// APR ///
 #define APR_Direct 1
@@ -102,7 +102,7 @@
 
 #define ncell_init 2
 #define Cell_division_factor 4
-#define IBM_length 2.5
+#define IBM_length 1.0
 #define Pressure_length 1.0
 #define XSPH_length 0.66667
 
@@ -111,10 +111,10 @@
 #define TOLERANCE 1e-5
 #define k_vonKarman 0.4
 #define Businger_const 16.0   // For MOST psi function
-#define MOST_z0 1.0           // Roughness length for city (>=2)
-#define MOST_z0h 0.1          // Roughness length for heat
-#define us_ini 0.2            // Friction velocity (m/s)
-#define ABL_h 5.0
+#define MOST_z0 0.1            // Roughness length [m] (0.1=grassland, 1.0=urban)
+#define MOST_z0h 0.01          // Roughness length for heat [m]
+#define us_ini 0.5             // Initial friction velocity [m/s]
+#define ABL_h 125.0            // ABL height [m]
 #define Pr_t 0.71             // Turbulent pr number
 
 #define Solid_cp 900.0
@@ -130,7 +130,7 @@
 #define Pb 0.0
 #define tempb 300.0     // Temp0 for boussinesq
 
-#define Scalar_Diffusion_coeff 0.0000001  // Scalar diffusion coefficient (m^2/s)
+#define Scalar_Diffusion_coeff 0.01  // Scalar diffusion coefficient (m^2/s) — matched to LDM D=0.01
 
 // Deardorff SGS model constants
 #define Ck_sgs 0.1
@@ -143,16 +143,16 @@
 #define k_ib_cy 0.0
 #define k_ib_cz 0.0
 
-#define MOST_boundary 1
+#define MOST_boundary 0   // 1: MOST boundary condition 적용, 0: 적용 안함
 #define Rho_air 1.225
 
 #define SIZ 0.01
 
-#define CASE_NAME "Transport_advection"  // input file name
+#define CASE_NAME "Gori"  // input file name
 
 #define INPUT_SPH_PATH  "./input/" CASE_NAME "/" CASE_NAME ".txt"
 #define INPUT_LDM_PATH  "./input/" CASE_NAME "/" CASE_NAME "_LDM.txt"
 #define SOLV_SPH_PATH   "./input/" CASE_NAME "/" CASE_NAME "_solv.txt"
 #define OUTPUT_DIR_NAME CASE_NAME
 
-extern __device__ float us_update;
+__device__ float us_update = us_ini;

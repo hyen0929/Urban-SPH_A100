@@ -43,7 +43,7 @@ double Interpolate_ux_caseA(Real z_inp, Real scale){
   Real z=z_scale*z_inp;
   Real u_scale=1.0;
   static const double z_data[] = {
-        0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
+        -2.0, 0.0, 0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
         0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
         0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
         0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
@@ -51,7 +51,7 @@ double Interpolate_ux_caseA(Real z_inp, Real scale){
         0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
     };
     static const double u_data[] = {
-        2.745, 2.935, 3.175, 3.435, 3.627,
+        0.0, 0.0, 2.745, 2.935, 3.175, 3.435, 3.627,
         3.824, 4.021, 4.210, 4.362, 4.491,
         4.502, 4.586, 4.606, 4.712, 4.854,
         4.993, 5.132, 5.449, 5.782, 6.077,
@@ -216,4 +216,74 @@ double Interpolate_ux_ABL(Real z_inp){
 	if(z_inp<0.0) ux=0.0;
 
 	return ux;
+}
+
+// ---- [file scope] 상수 테이블: 컴파일타임 초기화, L1-cached constant memory ----
+__constant__ double CASEH_Z[30] = {         // device에서 직접 접근 가능
+    0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
+    0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
+    0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
+    0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
+    0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
+    0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
+};
+__constant__ double CASEH_U[30] = {
+    2.745, 2.935, 3.175, 3.435, 3.627,
+    3.824, 4.021, 4.210, 4.362, 4.491,
+    4.502, 4.586, 4.606, 4.712, 4.854,
+    4.993, 5.132, 5.449, 5.782, 6.077,
+    6.338, 6.588, 6.693, 6.751, 6.751,
+    6.751, 6.751, 6.751, 6.751, 6.751
+};
+constexpr int CASEH_N = 30;
+
+// ---- [device] 선형 보간 + 끝단 1차 외삽, STL 미사용 이진탐색 ----
+__device__ __forceinline__
+double Device_Interpolate_ux_caseH(double z_inp, double scale)
+{
+    const double z = scale * z_inp;
+
+    // 아래/위 외삽 (분모 0 방지용 eps)
+    if (z <= CASEH_Z[0]) {
+        const double dz = CASEH_Z[1] - CASEH_Z[0];
+        const double du = CASEH_U[1] - CASEH_U[0];
+        return CASEH_U[0] + (z - CASEH_Z[0]) * (du / (dz + 1e-300));   // device-safe
+    }
+    if (z >= CASEH_Z[CASEH_N - 1]) {
+        const double dz = CASEH_Z[CASEH_N - 1] - CASEH_Z[CASEH_N - 2];
+        const double du = CASEH_U[CASEH_N - 1] - CASEH_U[CASEH_N - 2];
+        return CASEH_U[CASEH_N - 2] + (z - CASEH_Z[CASEH_N - 2]) * (du / (dz + 1e-300)); // device-safe
+    }
+
+    // 이진탐색: CASEH_Z[lo] <= z < CASEH_Z[hi]
+    int lo = 0, hi = CASEH_N - 1;                                   // // Changed: std::lower_bound 제거
+    while (hi - lo > 1) {                                           // // Changed: device-safe binary search
+        const int mid = (lo + hi) >> 1;
+        if (z < CASEH_Z[mid]) hi = mid; else lo = mid;
+    }
+
+    // 선형 보간
+    const double z0 = CASEH_Z[lo], z1 = CASEH_Z[hi];
+    const double u0 = CASEH_U[lo], u1 = CASEH_U[hi];
+    const double t  = (z - z0) / (z1 - z0 + 1e-300);                 // // Changed: 0 division 보호
+    // fma(t, (u1-u0), u0) 사용 시 약간의 수치 이득 (컴파일러가 지원하면 자동 FMA)
+    return u0 + t * (u1 - u0);
+}
+
+// Neutral MOST log-law profile for initial conditions
+// u(z) = (u* / κ) * ln(z / z0), capped at ABL height
+double Interpolate_ux_MOST_Neutral(Real z) {
+    if (z <= MOST_z0) return 0.0;
+    Real z_eff = (z > ABL_h) ? ABL_h : z;
+    return ((double)us_ini / k_vonKarman) * log((double)z_eff / MOST_z0);
+}
+
+// Neutral ABL TKE profile for initial conditions
+// k(z) = u*^2 / sqrt(Cmu) * (1 - z/h)^2,  Cmu = Ck^2/Ce ~ 0.01
+// Provides turbulent viscosity balance for MOST surface drag
+double Interpolate_k_MOST_Neutral(Real z) {
+    if (z >= ABL_h) return 1e-4;
+    double ratio = 1.0 - (double)z / ABL_h;
+    double k_surf = (double)us_ini * us_ini / 0.3;   // u*^2/sqrt(Cmu), ~0.83
+    return k_surf * ratio * ratio + 1e-4;
 }

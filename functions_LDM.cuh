@@ -633,10 +633,6 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 		e_turb/=tmp_flt;
 	}
 
-	// Diffusion test
-	k_turb = 1.0;
-	e_turb = 50.5050505;
-
 	// Lagrangian Timescales
 	Real C0 = 1.76;  // Original value
 
@@ -684,11 +680,20 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	yc=ty0+(ywind+uyc)*(t_dt);												// correct Y-directional position
 	zc=tz0+(zwind+uzc)*(t_dt);
 
+	// Ground reflection (z <= L1)
+	if(zc <= (Real)L1){
+		zc = (Real)(2.0*L1) - zc;
+		uzc = -uzc;
+	}
+	// Ceiling reflection (z >= L3)
+	if(zc >= (Real)L3){
+		zc = (Real)(2.0*L3) - zc;
+		uzc = -uzc;
+	}
+
 	LP1[i].x=xc;															// update x-directional position
 	LP1[i].y=yc;															// update y-directional position
-	LP1[i].z=zc;															// update z-directional position									
-	if(zc>=10.0 || zc<=0) uzc=-uzc;							// 바닥 반사 조건(kdh)								
-	
+	LP1[i].z=zc;															// update z-directional position
 	LP1[i].sigma=sc;
 
 	LP1[i].ux=uxc;														// update x-directional velocity
@@ -909,6 +914,61 @@ __global__ void KERNEL_time_update_LDM_direct(const Real tdt, Real tt,int_t*g_st
     // 디버깅/출력용 저장
     LP1[i].Tscale = tau;
     LP1[i].Sigvel = sigma_u;
+}
+
+// ========================================================================
+// LDM verification kernel: exact random walk in position space
+// - Advection: x += U_mean * dt  (uniform flow, no SPH interpolation)
+// - Diffusion: x += sqrt(2*D*dt) * N(0,1)  (exact for any dt)
+// - U_mean: mean flow velocity (x-direction only)
+// - D_coeff: molecular/turbulent diffusion coefficient [m^2/s]
+// ========================================================================
+__global__ void KERNEL_time_update_LDM_test(const Real tdt, Real tt, L_part1*LP1, L_part2*LP2, Real U_mean, Real D_coeff)
+{
+    uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if(i >= k_num_part_LDM) return;
+    if(LP1[i].i_type == 3) return;
+
+    // RNG initialization
+    unsigned long long seed;
+    curandState ss;
+    unsigned long long time_hash = (unsigned long long)(tt * 1e6);
+
+    if (LP1[i].seed < 1) {
+        LP1[i].seed = i * 321215 + time_hash + 36893211;
+        seed = LP1[i].seed;
+    }
+    else {
+        seed = LP1[i].seed;
+        seed = (seed * 1103515245 + time_hash + 12345) % 2147483647;
+        LP1[i].seed = seed;
+    }
+    curand_init(seed, i, (unsigned long long)(tt * 100), &ss);
+
+    Real tx0 = LP2[i].x0;
+    Real ty0 = LP2[i].y0;
+    Real tz0 = LP2[i].z0;
+
+    Real t_dt = tdt;
+
+    // Random walk diffusion: sqrt(2*D*dt) * N(0,1)
+    Real diff_scale = sqrt(2.0 * D_coeff * t_dt);
+    Real dWx = diff_scale * GaussianRand(&ss, 0.0, 1.0);
+    Real dWy = diff_scale * GaussianRand(&ss, 0.0, 1.0);
+    Real dWz = diff_scale * GaussianRand(&ss, 0.0, 1.0);
+
+    // Position update: advection + diffusion
+    Real xc = tx0 + U_mean * t_dt + dWx;
+    Real yc = ty0 + dWy;
+    Real zc = tz0 + dWz;
+
+    LP1[i].x = xc;
+    LP1[i].y = yc;
+    LP1[i].z = zc;
+
+    LP1[i].ux = U_mean;
+    LP1[i].uy = 0.0;
+    LP1[i].uz = 0.0;
 }
 
 __global__ void KERNEL_clc_concentration(int_t*g_str, int_t*g_end, L_part1*LP1)

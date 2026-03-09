@@ -1,54 +1,3 @@
-// ---- [file scope] 상수 테이블: 컴파일타임 초기화, L1-cached constant memory ----
-__constant__ double CASEH_Z[30] = {         // device에서 직접 접근 가능
-    0.0050000, 0.0100000, 0.0200000, 0.0400000, 0.0600000,
-    0.0800000, 0.1000000, 0.1200000, 0.1400000, 0.1600000,
-    0.1650000, 0.1700000, 0.1800000, 0.1900000, 0.2100000,
-    0.2300000, 0.2500000, 0.3000000, 0.3500000, 0.4000000,
-    0.4500000, 0.5000000, 0.5500000, 0.6000000, 0.6528736,
-    0.7724136, 0.8390808, 0.8689656, 0.8804600, 0.8919544
-};
-__constant__ double CASEH_U[30] = {
-    2.745, 2.935, 3.175, 3.435, 3.627,
-    3.824, 4.021, 4.210, 4.362, 4.491,
-    4.502, 4.586, 4.606, 4.712, 4.854,
-    4.993, 5.132, 5.449, 5.782, 6.077,
-    6.338, 6.588, 6.693, 6.751, 6.751,
-    6.751, 6.751, 6.751, 6.751, 6.751
-};
-constexpr int CASEH_N = 30;
-
-// ---- [device] 선형 보간 + 끝단 1차 외삽, STL 미사용 이진탐색 ----
-__device__ __forceinline__
-double Device_Interpolate_ux_caseH(double z_inp, double scale)
-{
-    const double z = scale * z_inp;
-
-    // 아래/위 외삽 (분모 0 방지용 eps)
-    if (z <= CASEH_Z[0]) {
-        const double dz = CASEH_Z[1] - CASEH_Z[0];
-        const double du = CASEH_U[1] - CASEH_U[0];
-        return CASEH_U[0] + (z - CASEH_Z[0]) * (du / (dz + 1e-300));   // device-safe
-    }
-    if (z >= CASEH_Z[CASEH_N - 1]) {
-        const double dz = CASEH_Z[CASEH_N - 1] - CASEH_Z[CASEH_N - 2];
-        const double du = CASEH_U[CASEH_N - 1] - CASEH_U[CASEH_N - 2];
-        return CASEH_U[CASEH_N - 2] + (z - CASEH_Z[CASEH_N - 2]) * (du / (dz + 1e-300)); // device-safe
-    }
-
-    // 이진탐색: CASEH_Z[lo] <= z < CASEH_Z[hi]
-    int lo = 0, hi = CASEH_N - 1;                                   // // Changed: std::lower_bound 제거
-    while (hi - lo > 1) {                                           // // Changed: device-safe binary search
-        const int mid = (lo + hi) >> 1;
-        if (z < CASEH_Z[mid]) hi = mid; else lo = mid;
-    }
-
-    // 선형 보간
-    const double z0 = CASEH_Z[lo], z1 = CASEH_Z[hi];
-    const double u0 = CASEH_U[lo], u1 = CASEH_U[hi];
-    const double t  = (z - z0) / (z1 - z0 + 1e-300);                 // // Changed: 0 division 보호
-    // fma(t, (u1-u0), u0) 사용 시 약간의 수치 이득 (컴파일러가 지원하면 자동 FMA)
-    return u0 + t * (u1 - u0);
-}
 ////////////////////////////////////////////////////////////////////////
 __global__ void IBM_predictor(Real t_dt,Real ttime,part1*P1,part2*P2)
 {
@@ -134,6 +83,8 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 	if(i>=k_num_part2) return;
 	if(P1[i].p_type<1000)	return;		// Immersed Boundary Method
 
+	// Stationary building: enforce zero velocity (no-slip)
+
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi,uxi,uyi,uzi;
 	Real rhoi;
@@ -190,7 +141,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 						// if(abs(xj-95)<1e-3 && abs(zj-19.5)<1e-3) continue;    // for AIJ Case HS
 
 						if(itype!=4){
-							if(P1[j].p_type==1){
+							if(P1[j].p_type==1 && P1[j].buffer_type!=99){
 
             				tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
@@ -225,64 +176,57 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 
 	// preliminary velocity
 	P1[i].concentration = filt;
-	// P1[i].ux_i = tmpux/(filt+1e-10);
-	// P1[i].uy_i = tmpuy/(filt+1e-10);
-  	// P1[i].uz_i = tmpuz/(filt+1e-10);
-
-	// the force applied to solid for no-slip condition
+	// if(filt<1e-3){
+	// 	P1[i].fbx = 0.0;
+	// 	P1[i].fby = 0.0;
+	// 	P1[i].fbz = 0.0;
+	// }
+	// else{
+	// 	P1[i].fbx = 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;
+	// 	P1[i].fby = 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
+	// 	P1[i].fbz = 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+	// }
+	// Normal/tangential IBM forcing
 	if(filt<1e-3){
 		P1[i].fbx = 0.0;
 		P1[i].fby = 0.0;
 		P1[i].fbz = 0.0;
 	}
 	else{
-		const Real beta = 1.0;       // Relaxation factor
-		P1[i].fbx = beta * 1.225 * (uxi-tmpux/(filt+1e-10))/t_dt;    // 1.225 for the fluid density (KDH)
-		P1[i].fby = beta * 1.225 * (uyi-tmpuy/(filt+1e-10))/t_dt;
-  		P1[i].fbz = beta * 1.225 * (uzi-tmpuz/(filt+1e-10))/t_dt;
+		// Interpolated fluid velocity at IBM particle
+		Real ufx = tmpux/(filt+1e-10);
+		Real ufy = tmpuy/(filt+1e-10);
+		Real ufz = tmpuz/(filt+1e-10);
+
+		// Surface normal vector (precomputed, outward from building)
+		Real nx = P3[i].nx;
+		Real ny = P3[i].ny;
+		Real nz = P3[i].nz;
+		Real nmag = sqrt(nx*nx + ny*ny + nz*nz);
+
+		if(nmag > 0.5){
+			nx /= nmag;  ny /= nmag;  nz /= nmag;
+
+			// Normal/tangential decomposition
+			Real un  = ufx*nx + ufy*ny + ufz*nz;   // normal component (scalar)
+			Real utx = ufx - un*nx;                  // tangential velocity
+			Real uty = ufy - un*ny;
+			Real utz = ufz - un*nz;
+
+			// Normal: full correction (impenetrability)
+			// Tangential: relaxed correction toward zero (partial no-slip)
+			Real beta_t = 0.3;
+			P1[i].fbx = (-un)*nx + beta_t*(uxi - utx);
+			P1[i].fby = (-un)*ny + beta_t*(uyi - uty);
+			P1[i].fbz = (-un)*nz + beta_t*(uzi - utz);
+		}
+		else{
+			// Fallback: isotropic direct forcing (no valid normal)
+			P1[i].fbx = uxi - ufx;
+			P1[i].fby = uyi - ufy;
+			P1[i].fbz = uzi - ufz;
+		}
 	}
-	// {
-	// 	// 주변 유체 보간 속도
-	// 	Real ufx = tmpux/(filt+1e-10);
-	// 	Real ufy = tmpuy/(filt+1e-10);
-	// 	Real ufz = tmpuz/(filt+1e-10);
-
-	// 	// Surface normal vector
-	// 	Real nx = P3[i].nx;
-	// 	Real ny = P3[i].ny;
-	// 	Real nz = P3[i].nz;
-	// 	Real nmag = sqrt(nx*nx+ny*ny+nz*nz)+1e-20;
-	// 	nx=nx/nmag;
-	// 	ny=ny/nmag;
-	// 	nz=nz/nmag;
-
-	// 	// Normal/tangential 분해
-	// 	Real un  = ufx*nx + ufy*ny + ufz*nz;
-	// 	Real utx = ufx - un*nx;
-	// 	Real uty = ufy - un*ny;
-	// 	Real utz = ufz - un*nz;
-
-	// 	// Tangential 목표속도(벽모델 미적용: 0으로 완화, 추후 Ub_t로 교체 가능)
-	// 	Real Ubtx = 0.2*Device_Interpolate_ux_caseH(P1[i].z, 1.0);  // for AIJ Case H 
-	// 	Real Ubty = 0.0f, Ubtz = 0.0f;
-
-	// 	//  β_t 결정(권장 0.2~0.5). 자동 산정(Δt/τ_f) 예시
-	// 	Real Ut_mag = sqrt(utx*utx + uty*uty + utz*utz) + 1e-8;
-	// 	Real ys     = 0.5f * P1[i].h;
-	// 	Real tau_f  = max(2.0f*ys/Ut_mag, t_dt);
-	// 	//Real beta_t = fminf(0.5f, t_dt/tau_f); //  (고정값 원하면 0.3 등으로 대체)
-	// 	Real beta_t =1.0f;
-
-	// 	// Normal은 불침투(강제), Tangential은 β_t로 완화
-	// 	Real corrx = (-un)*nx + beta_t*(Ubtx - utx);
-	// 	Real corry = (-un)*ny + beta_t*(Ubty - uty);
-	// 	Real corrz = (-un)*nz + beta_t*(Ubtz - utz);
-
-	// 	P1[i].fbx = Rho_air * corrx / t_dt;
-	// 	P1[i].fby = Rho_air * corry / t_dt;
-	//   	P1[i].fbz = Rho_air * corrz / t_dt;
-	// }
-	// P1[i].fbz = 1000.0 * (P1[i].uz-tmpuz)/t_dt;
 }
 
 __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
@@ -291,6 +235,7 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 	if(i>=k_num_part2) return;
 	if(P1[i].p_type!=1)	return;		// Immersed Boundary Method
 	if(P1[i].buffer_type==Outlet) return;
+	if(P1[i].buffer_type==99) return;	// Skip interior fluid (inside buildings)
 
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi,uxi,uyi,uzi;
@@ -350,13 +295,13 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 							if(P1[j].p_type==1000){
 								Real hj=IBM_length*P1[j].h;
 								Real Aj=calc_tmpA(hj);
-								search_range=k_search_kappa*hi;    // IBM 입자 기준으로
+								search_range=k_search_kappa*hj;    // IBM 커널 기준 (force_interpolation과 대칭)
 								
             					tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 								if(tdist<search_range){
 									Real mj,tdwx,tdwy,uxj,uyj,uzj,rhoj,tmprho;
 									Real fb_xm, fb_ym, fb_zm;
-									Real twij=calc_kernel_wij(tmp_A,hi,tdist);    // IBM 입자 기준으로
+									Real twij=calc_kernel_wij(Aj,hj,tdist);    // IBM 커널 사용 (force_interpolation과 대칭)
  
 									p_type_j=P1[j].p_type;
 
@@ -380,6 +325,12 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
 									fb_y+=fb_ym*twij*tmprho;
     								fb_z+=fb_zm*twij*tmprho;
 									filt+=tmprho*twij;
+
+									// Kernel-weighted average (no volume element — IBM is 2D surface)
+									// fb_x+=fb_xm*twij;
+									// fb_y+=fb_ym*twij;
+    								// fb_z+=fb_zm*twij;
+									// filt+=twij;
 								}
 							}
 						}
@@ -398,18 +349,12 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
         P1[i].fbx = 0.0f;
         P1[i].fby = 0.0f;
         P1[i].fbz = 0.0f;
-        P1[i].concentration = 0.0f;
-        return;
+       return;
     }
-	// the force applied to fluid for no-slip condition
+	// Direct sum (not normalized): use with single-layer surface IBM only
 	P1[i].fbx = fb_x;
 	P1[i].fby = fb_y;
   	P1[i].fbz = fb_z;
-	P1[i].concentration = filt;
-	//
-	// P1[i].fb_x = fb_x/(filt+1e-10);
-	// P1[i].fb_y = fb_y/(filt+1e-10);
-  	// P1[i].fb_z = fb_z/(filt+1e-10);
 }
 ////////////////////////////////////////////////////////////////////////
 __global__ void IBM_corrector(Real t_dt,Real ttime,part1*P1,part1*TP1,part2*P2,part3*P3)
@@ -471,13 +416,14 @@ __global__ void IBM_corrector(Real t_dt,Real ttime,part1*P1,part1*TP1,part2*P2,p
 	tyc = ty0 + tuyc*(t_dt);
 	tzc = tz0 + tuzc*(t_dt);
 
-	// TP1[i].x = txc;
-	// TP1[i].y = tyc;
-	// TP1[i].z = tzc;
+	// Stationary building: copy position from sorted array, velocity = 0
+	TP1[i].x = P1[i].x;
+	TP1[i].y = P1[i].y;
+	TP1[i].z = P1[i].z;
 
-	// TP1[i].ux = tuxc;
-	// TP1[i].uy = tuyc;
-	// TP1[i].uz = tuzc;
+	TP1[i].ux = 0.0;
+	TP1[i].uy = 0.0;
+	TP1[i].uz = 0.0;
 
 	// if(P1[i].p_type>=2000)	TP1[i].rho=P2[i].rho_ref/(P1[i].jacob-1e-20);
 
@@ -529,9 +475,58 @@ __global__ void IBM_corrector_fluid(Real t_dt,Real ttime,part1*P1,part2*P2,part3
 	int_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i>=k_num_part2) return;
 	if(P1[i].p_type!=1) return;
+	if(P1[i].buffer_type==99) return;	// Skip interior fluid
 
-	P1[i].ux+=P1[i].fbx/P1[i].rho*t_dt;
-	P1[i].uy+=P1[i].fby/P1[i].rho*t_dt;
-	P1[i].uz+=P1[i].fbz/P1[i].rho*t_dt;
+	// Direct forcing: velocity correction [m/s]
+	P1[i].ux += P1[i].fbx;
+	P1[i].uy += P1[i].fby;
+	P1[i].uz += P1[i].fbz;
 
+}
+
+// Zero velocity for fluid particles flagged as interior (inside buildings)
+__global__ void KERNEL_zero_interior_velocity(part1* P1)
+{
+	int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= k_num_part2) return;
+	if (P1[i].buffer_type != 99) return;
+
+	P1[i].ux = 0.0;
+	P1[i].uy = 0.0;
+	P1[i].uz = 0.0;
+	P1[i].pres = 0.0;
+}
+
+// Monitor a specific particle each timestep
+__global__ void KERNEL_monitor_particle(part1* P1, part3* P3, int step, int phase)
+{
+	int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= k_num_part2) return;
+
+	// Target: (377.5, 32.5, 2.5)
+	Real tx = 377.5, ty = 32.5, tz = 2.5;
+	Real dist = (P1[i].x-tx)*(P1[i].x-tx) + (P1[i].y-ty)*(P1[i].y-ty) + (P1[i].z-tz)*(P1[i].z-tz);
+	if (dist > 1.0) return;
+
+	// phase: 0=after_prep, 1=after_predictor, 2=after_IBM, 3=after_PPE, 4=after_corrector
+	const char* ph[] = {"PREP", "PRED", "IBM ", "PPE ", "CORR"};
+	printf("[MON] stp=%d %s  pos=(%.1f,%.1f,%.1f)  v=(%.4f,%.4f,%.4f)  p=%.2f  "
+	       "fb=(%.4f,%.4f,%.4f)  fv=(%.4f,%.4f,%.4f)  fp=(%.4f,%.4f,%.4f)  bt=%d\n",
+	       step, ph[phase],
+	       P1[i].x, P1[i].y, P1[i].z,
+	       P1[i].ux, P1[i].uy, P1[i].uz,
+	       P1[i].pres,
+	       P1[i].fbx, P1[i].fby, P1[i].fbz,
+	       P1[i].fv_x, P1[i].fv_y, P1[i].fv_z,
+	       P1[i].fp_x, P1[i].fp_y, P1[i].fp_z,
+	       P1[i].buffer_type);
+}
+
+__global__ void KERNEL_change_fluid_to_IBM(part1* P1){
+	int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= k_num_part2) return;
+	if (P1[i].p_type == 1000) P1[i].i_type=3;
+	if (P1[i].buffer_type != 99) return;
+
+	P1[i].p_type = 1000;
 }
