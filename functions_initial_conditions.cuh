@@ -287,3 +287,31 @@ double Interpolate_k_MOST_Neutral(Real z) {
     double k_surf = (double)us_ini * us_ini / 0.3;   // u*^2/sqrt(Cmu), ~0.83
     return k_surf * ratio * ratio + 1e-4;
 }
+
+// Neutral ABL dissipation profile for initial conditions (standard k-epsilon)
+// eps(z) = u*^3 / (kappa * z),  capped at ABL height, floored at z=MOST_z0
+double Interpolate_e_MOST_Neutral(Real z) {
+    double zc = (double)z;
+    if (zc < (double)MOST_z0) zc = (double)MOST_z0;
+    if (zc > (double)ABL_h)   zc = (double)ABL_h;
+    return (double)us_ini * us_ini * us_ini / (k_vonKarman * zc);
+}
+
+// MOST temperature profile for initial conditions
+// T(z) = T_con + (T_ini-T_con) * ln(z/z0h) / ln(ABL_h/z0h)
+//   Unstable (T_con>T_ini): T decreases with height
+//   Neutral  (T_con=T_ini): uniform
+//   Stable   (T_con<T_ini): T increases with height (inversion)
+double Interpolate_T_MOST(Real z) {
+    double zi_t = fmax((double)z, (double)MOST_z0h);
+    double log_norm = log((double)ABL_h / MOST_z0h);
+    return T_con + (T_ini - T_con) * log(zi_t / MOST_z0h) / log_norm;
+}
+
+// Linear T profile for diagnostic test (A1):
+// T(z=0)=T_con, T(z=ABL_h)=T_ini, linear in z, clamped above ABL_h.
+// Same endpoints as MOST_T but linear instead of log — smooths sharp gradient near ground.
+double Interpolate_T_Linear_Stable(Real z) {
+    double zc = fmin(fmax((double)z, 0.0), (double)ABL_h);
+    return T_con + (T_ini - T_con) * zc / (double)ABL_h;
+}

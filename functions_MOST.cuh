@@ -176,6 +176,7 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
     if(i>=k_num_part2) return;
     if(P1[i].MOST_buffer!=1) return;
+    if(P1[i].k_turb > 2.0f) return;   // Skip MOST in building wake / horseshoe vortex (MOST assumes flat-terrain surface layer)
 
     // Particle properties
     int_t icell,jcell,kcell;
@@ -245,6 +246,7 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
       u_star = k_vonKarman*wind_speed / logf(zi/z0);
       theta_star = k_vonKarman*(tempi-theta_surface) / logf(zi/z0h);
     }
+    u_star = fminf(u_star, 2.0f);     // Cap u_star: 2 m/s corresponds to ~20 m/s reference wind
 
     // Calculate momentum flux (tau) using wind speed
     float momentum_x = -rhoi*u_star*(uxi*u_star/wind_speed);        // N/m2 (kg/ms2)
@@ -253,62 +255,43 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     // Calculate surface fluxes
     Real sensible_heat_flux = -rhoi*Air_cp*u_star*theta_star;      // W/m2(J/m2s)
 
-    // calculate ghost node
-    Real xgnode_i, ygnode_i, zgnode_i;
-  	xgnode_i=xi;
-  	ygnode_i=yi;
-  	zgnode_i=zi+2.0f*space;
-
-    // calculate I,J,K in cell
-  	if((k_x_max==k_x_min)){icell=0;}
-  	else{icell=min(floor((xgnode_i-k_x_min)/k_dcell),k_NI-1);}
-  	if((k_y_max==k_y_min)){jcell=0;}
-  	else{jcell=min(floor((ygnode_i-k_y_min)/k_dcell),k_NJ-1);}
-  	if((k_z_max==k_z_min)){kcell=0;}
-  	else{kcell=min(floor((zgnode_i-k_z_min)/k_dcell),k_NK-1);}
-
-  	// out-of-range handling
-  	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
-
-  	for(int_t z=-1;z<=1;z++){
-  		for(int_t y=-1;y<=1;y++){
-  			for(int_t x=-1;x<=1;x++){
-  				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
-  				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
-  				if(g_str[k]!=cu_memset){
-  					int_t fend=g_end[k];
-  					for(int_t j=g_str[k];j<fend;j++){
-  						Real xj,yj,zj,tdist;
-
-              xj=P1[j].x;
-              yj=P1[j].y;
-              zj=P1[j].z;
-
-              tdist=sqrtf((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj));
-              if(tdist<0.3f*space){
-                if(apply_heat) P3[j].dtemp += 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
-                if(apply_heat) P1[j].hmz = 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
-              }
-            }
-          }
-        }
-      }
-    }
-
     P1[i].fmx = momentum_x*space*space/mi;
     P1[i].fmy = momentum_y*space*space/mi;
 
-    if(apply_heat) P3[i].dtemp += 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
-    if(apply_heat) P1[i].hmz = 0.5f*sensible_heat_flux/(space*rhoi*Air_cp);
+    // Apply full heat flux to MOST_buffer particle only
+    if(apply_heat) P3[i].dtemp += sensible_heat_flux/(space*rhoi*Air_cp);
+    if(apply_heat) P1[i].hmz = sensible_heat_flux/(space*rhoi*Air_cp);
 
     // Update reference friction velocity at domain midpoint
     Real x_ref = 0.5f*(L_MOST_x0 + L_MOST_xmax);
-    if((xi-x_ref)*(xi-x_ref)+yi*yi<1e-3) us_update=u_star;
+    if((xi-x_ref)*(xi-x_ref)+yi*yi<1e-3){ us_update=u_star; OB_length_global=OB_length; }
 
     // Store results in particle
     // P1[i].float1 = u_star;
     // P1[i].float2 = theta_star;
     // P1[i].float3 = OB_length;
+}
+
+// MOST inlet BC: prescribes velocity and temperature profiles at inlet buffer
+// U(z) = (u*/κ) * ln(z/z0)             — neutral log profile, u* from running us_update
+// T(z) = T_con + (T_ini-T_con)*ln(z/z0h)/ln(ABL_h/z0h) — MOST log temperature
+//   Case 211 unstable (T_con>T_ini): T decreases with height
+//   Case 212 neutral  (T_con=T_ini): T uniform
+//   Case 213 stable   (T_con<T_ini): T increases with height (inversion)
+__global__ void KERNEL_MOST_inlet3D(part1*P1) {
+    uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+    if(i>=k_num_part2) return;
+    if(P1[i].buffer_type!=Inlet && P1[i].buffer_type!=-1) return;
+
+    Real zi_u = fmaxf(P1[i].z, MOST_z0);
+    Real zi_t = fmaxf(P1[i].z, MOST_z0h);
+
+    P1[i].ux = (us_update/k_vonKarman) * logf(zi_u/MOST_z0);
+    P1[i].uy = 0.0f;
+    P1[i].uz = 0.0f;
+
+    Real log_norm = logf(ABL_h/MOST_z0h);
+    P1[i].temp = T_con + (T_ini - T_con) * logf(zi_t/MOST_z0h) / log_norm;
 }
 
 // MOST-prescribed eddy viscosity: ν_t(z) = κ u* z (1 - z/h)

@@ -25,7 +25,7 @@ __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real 
 	// 	}
 	// }
 
-	if(ttime>=LP1[i].t_release){
+	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
 		LP1[i].i_type=1;
 	}
 }
@@ -36,7 +36,7 @@ __global__ void particle_releasing_Dispersion_Gaussian(Real tdt,int freq,Real tt
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==1) return;
 
-	if(ttime>=LP1[i].t_release){
+	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
 		LP1[i].i_type=1;
 
 		// RNG 초기화
@@ -77,7 +77,7 @@ __global__ void particle_releasing_Dispersion_Kernel(Real tdt,int freq,Real ttim
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==1) return;
 
-	if(ttime>=LP1[i].t_release){
+	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
 		LP1[i].i_type=1;
 
 		// RNG 초기화
@@ -122,6 +122,7 @@ __global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,
 	if(i>=k_num_part_LDM) return;
 	//if(LP1[i].p_type==0) return;
 	if(LP1[i].i_type==3) return;
+	if(LP1[i].buffer_type==1) return;  // deposited: skip predictor
 
 	int_t p_typei;
 	double tmp;
@@ -487,6 +488,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==3) return;
+	if(LP1[i].buffer_type==1) return;  // deposited: skip advection (handled by KERNEL_dry_deposition)
 
 	unsigned long long seed;
 	curandState ss;

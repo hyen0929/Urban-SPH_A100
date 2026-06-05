@@ -20,8 +20,7 @@ typedef struct particles_array_1{
 	Real h;																	// kernel distance
 	Real temp;														// temperature [K]
 	Real pres;														// pressure [Pa]
-	Real pres0;
-	Real pres_temp;
+	Real pres0;														// previous-step pressure (incremental PPE anchor)
 	Real rho;														// density [kg/m3]	( Predictor_Corrector : Predicted density / Euler : Real density )
 	Real flt_s;														// Shepard filter
 	Real enthalpy;
@@ -51,7 +50,6 @@ typedef struct particles_array_1{
 	// Real ux_f,uy_f,uz_f;										// u', v', w' (for LES by KDH)
 
 	// for PPE
-	// Real fpx, fpy, fpz;
 	Real fbx, fby, fbz;
 	Real fmx, fmy, hmz;
 	Real PPE1, PPE2;
@@ -64,6 +62,11 @@ typedef struct particles_array_1{
 	int_t ncell;
 	int_t source;
 
+	// Time-averaging accumulators (Eulerian SPH — particles fixed in space)
+	// Raw sums; divided by avg_count at output time. See KERNEL_accumulate_avg.
+	Real ux_avg, uy_avg, uz_avg;
+	Real k_turb_avg, e_turb_avg;
+
 }part1;
 ////////////////////////////////////////////////////////////////////////
 typedef struct particles_array_2{
@@ -73,14 +76,9 @@ typedef struct particles_array_2{
 
 	Real x0,y0,z0;													// Initial positions [m]
 	Real ux0,uy0,uz0;												// Initial velocity [m/s]
-	Real rho0;															// Initial density [kg/m3]
-	Real drho0;															// Error compensation: divergence error
 
-	Real SR;
 	Real temp0;
 
-	// psh: concentration diffusion
-	Real concn0;														// concentration
 	Real enthalpy0;													// enthalpy [J/kg]
 }part2;
 ////////////////////////////////////////////////////////////////////////
@@ -90,12 +88,13 @@ typedef struct particles_array_3{
 	Real denthalpy;
 	Real ftotalx,ftotaly,ftotalz;						// total force [m/s2]
 	Real ftotal;
-	Real fpx,fpy,fpz,fbody;
+	Real fpx,fpy,fpz;
 	Real dtemp;
 
 	Real omx,omy,omz;             // Vorticity (kdh)
 
-	Real dk_turb, de_trub;        // Turbulent kinetic energy, dissipation rate(for Deardorff model,KDH)
+	Real dk_turb, de_turb;        // Turbulent kinetic energy, dissipation rate(for Deardorff model,KDH)
+	Real SR;                      // |S| strain-rate magnitude, written by KERNEL_clc_prep3D for k-eps
 	// Real virial,radius;
 
 	Real cc;
@@ -121,6 +120,7 @@ typedef struct p2p_particles_array_3{
 
 typedef struct LDM_particles_array_1{
 	int_t i_type;													// Inner or Outer
+	int_t buffer_type;											// 0: active, 1: deposited (dry deposition), used by functions_DD.cuh
 	uint_t p_type;													// particle type: FLUID or BOUNDARY
 
 	Real t_release;										// particle release time [s]				
@@ -160,51 +160,6 @@ typedef struct LDM_particles_array_2{
 	Real sigma0;
 }L_part2;
 ////////////////////////////////////////////////////////////////////////
-typedef struct LDM_particles_array_3{
-	Real drho;															// Time Derivative of density [kg/m3 s]
-	Real dconcn;														// concentration time derivative
-	Real denthalpy;
-	Real ftotalx,ftotaly,ftotalz;						// total force [m/s2]
-	Real ftotal;
-
-	// turbulence (by esk)
-	Real vis_t;																// turbulence viscosity
-	Real Sxx,Sxy,Sxz,Syy,Syz,Szz;							// strain tensor... for SPH model
-	Real dk_turb,de_turb;											// turbulence kinetic energy,dissipation rate --> check unit
-
-	Real lbl_surf;													// surface label
-	Real cc;																// color code
-
-	Real Cm[Correction_Matrix_Size][Correction_Matrix_Size];
-	// Real inv_cm_xx,inv_cm_yy,inv_cm_zz;
-	// Real inv_cm_xy,inv_cm_yz,inv_cm_zx;
-
-	Real nx,ny,nz;														// color code gradient for surface tension force (2016.09.02 jyb)
-	Real nx_c,ny_c,nz_c;											// color code gradient for surface tension force (2016.09.02 jyb)
-	Real nmag;																// 2017.04.20 jyb
-	Real nmag_c;															// 2017.04.20 jyb
-	/*
-	// psh:: ISPH info
-	Real fpx,fpy,fpz;													// pressure force [m/s2]
-	Real x_adv,y_adv,z_adv;										// predicted position by advection forces
-	Real rho_err;															// difference between predicted density and reference density
-	Real stiffness;														// stiffness parameter
-	//----------------------------------------
-
-	uint_t hf_boundary;											// heat flux particle index for heat transfer (heat flux particle : 1 / else : 0)
-	Real cm_d; 															//--- not use
-	Real p001;															// extra data	//--- not use
-	Real curv; 															//--- not use
-	Real num_density;												// particle number density [1/m3] //--- not use
-
-	Real nd_ref;
-	Real cm_xx,cm_yy,cm_zz;
-	Real cm_xy,cm_yz,cm_zx;
-	//*/
-
-
-}L_part3;
-///////////////////////////////////////////////////////////////////////////
 typedef struct LDM_p2p_particles_array_1{
 	Real drho;															// Time Derivative of density [kg/m3 s]
 	Real dconcn;														// concentration time derivative

@@ -118,6 +118,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 
 	// tmpx=tmpy=tmppx=tmppy=tmp_R=0.0;
 	tmpux=tmpuy=tmpuz=filt=0.0;
+	Real sum_dWx=0.0f, sum_dWy=0.0f, sum_dWz=0.0f;  // Σ(∇W·V) IBM 입자 기준
 
 	for(int_t z=-P1[i].ncell;z<=P1[i].ncell;z++){
 		for(int_t y=-P1[i].ncell;y<=P1[i].ncell;y++){
@@ -148,6 +149,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 									Real mj,uxj,uyj,uzj,rhoj,tmprho;
 									Real hj;
 									Real twij=calc_kernel_wij(tmp_A,hi,tdist);
+									Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
 									hj=P1[i].h;  // IBM 입자 기준으로
 
 									// apply_MLS_filter_2D(P3[i].A,twij,&twij,xi,xj,yi,yj,hj);
@@ -165,6 +167,11 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 									tmpuy+=(uyj)*tmprho*twij;
             						tmpuz+=(uzj)*tmprho*twij;
 									filt+=tmprho*twij;
+
+									// Σ(∇W·V): ∇_i W_ij = dW/dr * (r_i - r_j)/r
+									sum_dWx += tdwij * (xi-xj)/tdist * tmprho;
+									sum_dWy += tdwij * (yi-yj)/tdist * tmprho;
+									sum_dWz += tdwij * (zi-zj)/tdist * tmprho;
 								}
 							}
 						}
@@ -174,8 +181,13 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		}
 	}
 
-	// preliminary velocity
+	// Σ(W·V) → concentration (이미 있던 것), Σ(∇W·V) → grad_cx/cy/cz
+	// 완전한 커널이면: Σ(W·V) ≈ 1, Σ(∇W·V) ≈ 0
+	// 벽면 IBM 입자는 유체가 한쪽에만 있으므로 Σ(W·V) < 1, Σ(∇W·V) ≠ 0 예상
 	P1[i].concentration = filt;
+	P3[i].grad_cx = sum_dWx;
+	P3[i].grad_cy = sum_dWy;
+	P3[i].grad_cz = sum_dWz;
 	// if(filt<1e-3){
 	// 	P1[i].fbx = 0.0;
 	// 	P1[i].fby = 0.0;
@@ -204,7 +216,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 		Real nz = P3[i].nz;
 		Real nmag = sqrt(nx*nx + ny*ny + nz*nz);
 
-		if(nmag > 0.5){
+		if(0){  // FORCE mode B: multi-building case (CM-based normal unreliable for non-convex)
 			nx /= nmag;  ny /= nmag;  nz /= nmag;
 
 			// Normal/tangential decomposition
@@ -221,7 +233,7 @@ __global__ void IBM_force_interpolation3D(Real t_dt,int_t*g_str,int_t*g_end,part
 			P1[i].fbz = (-un)*nz + beta_t*(uzi - utz);
 		}
 		else{
-			// Fallback: isotropic direct forcing (no valid normal)
+			// Mode B: isotropic direct forcing (always active for multi-building / unreliable normal)
 			P1[i].fbx = uxi - ufx;
 			P1[i].fby = uyi - ufy;
 			P1[i].fbz = uzi - ufz;
@@ -351,10 +363,14 @@ __global__ void IBM_spreading_interpolation3D(int_t*g_str,int_t*g_end,part1*P1,p
         P1[i].fbz = 0.0f;
        return;
     }
-	// Direct sum (not normalized): use with single-layer surface IBM only
-	P1[i].fbx = fb_x;
-	P1[i].fby = fb_y;
-  	P1[i].fbz = fb_z;
+	// Normalize by filt to prevent over-counting at building corners.
+	// Near flat faces: filt ≈ 1 → no change.
+	// Near corners: multiple IBM faces contribute (filt > 1) → divide to avoid
+	// spurious large negative velocity corrections.
+	Real filt_norm = fmaxf(filt, 1.0f);
+	P1[i].fbx = fb_x / filt_norm;
+	P1[i].fby = fb_y / filt_norm;
+  	P1[i].fbz = fb_z / filt_norm;
 }
 ////////////////////////////////////////////////////////////////////////
 __global__ void IBM_corrector(Real t_dt,Real ttime,part1*P1,part1*TP1,part2*P2,part3*P3)
@@ -484,7 +500,7 @@ __global__ void IBM_corrector_fluid(Real t_dt,Real ttime,part1*P1,part2*P2,part3
 
 }
 
-// Zero velocity for fluid particles flagged as interior (inside buildings)
+// Zero velocity/pressure/temperature for fluid particles flagged as interior (inside buildings)
 __global__ void KERNEL_zero_interior_velocity(part1* P1)
 {
 	int_t i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -495,6 +511,7 @@ __global__ void KERNEL_zero_interior_velocity(part1* P1)
 	P1[i].uy = 0.0;
 	P1[i].uz = 0.0;
 	P1[i].pres = 0.0;
+	P1[i].temp = T_ini;  // Prevent temperature accumulation inside building
 }
 
 // Monitor a specific particle each timestep

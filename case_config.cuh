@@ -5,7 +5,7 @@
 // Case selector
 // ============================================================
 #ifndef CASE_ID
-#define CASE_ID 1010
+#define CASE_ID 501
 #endif
 
 // ============================================================
@@ -15,6 +15,7 @@
 //   - Case H 계열: 101, 102, 103 ...
 //   - Case C 계열: 201 ...
 //   - Multi block 계열: 301 ...
+//   - Case CS (Single building block) 계열: 501 ...
 //   - Leipzig 계열: 1001 ...
 //   - Transport test 계열: 2001 ...
 //   - MOST Validation 계열: 3001 ...
@@ -54,7 +55,7 @@
 
 #elif CASE_ID == 103
 // ------------------------------------------------------------
-// Case A_n16 (dx=0.01m)
+// Case A_n16 (dx=0.005m)
 // ------------------------------------------------------------
   #define L1  0.0
   #define L2  0.0125
@@ -63,14 +64,14 @@
 
   #define L_left   -0.4275
   #define L_right   0.4275
-  #define L_ceiling 363.75
+  #define L_ceiling 0.965
 
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
 #elif CASE_ID == 201
 // ------------------------------------------------------------
-// Case AS, n=10, Scale up
+// Case AS, n=10, Scale up (dx=1.0m, MOST at 3rd layer z=2.5m)
 // ------------------------------------------------------------
   #define L1  0.0
   #define L2  3.5
@@ -83,6 +84,30 @@
 
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
+  #define L_MOST_z_lo 0.0
+  #define L_MOST_z_hi 1.0
+
+// ------------------------------------------------------------
+// Single Building - Stability comparison (domain same as 201)
+//   211: Unstable  (T_con=315K, ΔT=+15K)
+//   212: Neutral   (T_con=300K, ΔT=  0K)
+//   213: Stable    (T_con=285K, ΔT=-15K)
+// dx=1.0m, MOST at 3rd fluid layer (z=2.5m)
+// ------------------------------------------------------------
+#elif CASE_ID == 211 || CASE_ID == 212 || CASE_ID == 213
+  #define L1  0.0
+  #define L2  3.5
+  #define L3  2013.304
+  #define L4  2210.0
+
+  #define L_left   -76.5
+  #define L_right   76.5
+  #define L_ceiling 121.0
+
+  #define L_MOST_x0   0.0
+  #define L_MOST_xmax 1990.0
+  #define L_MOST_z_lo 0.0
+  #define L_MOST_z_hi 1.0
 
 #elif CASE_ID == 301
 // ------------------------------------------------------------
@@ -132,9 +157,36 @@
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
+#elif CASE_ID == 501
+// ------------------------------------------------------------
+// Case CS (Single building block, dx=1.0m)
+//   - MOST off; inlet sustained via KERNEL_Recycling3D (log profile w/ us_ini)
+//   - Outlet buffer 미사용 (L3/L4 도메인 밖) → 도메인 충분히 길게 빼서 wake가 끝에 못 닿게
+//   - Ceiling은 input의 p_type=-1 layer가 free-slip 처리
+// ------------------------------------------------------------
+  #define L1  0.0
+  #define L2  3.5
+  #define L3  2600.0
+  #define L4  2600.0
+
+  #define L_left   -71.5
+  #define L_right   71.5
+  #define L_ceiling 3633.75
+
+  #define L_MOST_x0   10.0
+  #define L_MOST_xmax 200.0
+
+  // MOST ON for CS (Parameters.cuh의 default 1 그대로 사용)
+  //  - geostrophic body force가 도메인 전체 momentum 유지
+  //  - heat flux는 conduction OFF라 무영향
+
+  // CS는 building block이 핵심 → IBM 활성화 보장
+  #undef  DEACTIVATE_IBM
+  #define DEACTIVATE_IBM 0
+
 // ------------------------------------------------------------
 // Leipzig (dx=2.5m)
-// ------------------------------------------------------------  
+// ------------------------------------------------------------
 #elif CASE_ID == 1001
 
   #define L1  -900.0
@@ -280,7 +332,14 @@
   #define L_MOST_x0   10.0      // Past inlet buffer (L2=8.75)
   #define L_MOST_xmax 500.0     // Fluid domain end
 
-
 #else
   #error "Unknown CASE_ID. Please define a valid CASE_ID in case_config.h or via -DCASE_ID=..."
+#endif
+
+// MOST measurement height fallback (override per-case above if needed)
+#ifndef L_MOST_z_lo
+  #define L_MOST_z_lo 0.4
+#endif
+#ifndef L_MOST_z_hi
+  #define L_MOST_z_hi 0.6
 #endif

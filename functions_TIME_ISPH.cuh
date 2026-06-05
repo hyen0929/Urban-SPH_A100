@@ -46,7 +46,12 @@ __global__ void KERNEL_clc_projection(int_t tcount, Real tdt,Real ttime,part1*P1
 			// tduz_dt0=P3[i].ftotalz*(buffer_type==0)+P1[i].fbz/P1[i].rho*(buffer_type==0);									// initial z-directional acceleration
 
 			// Geostrophic pressure gradient: balances MOST surface friction for steady ABL
+#if CASE_ID >= 500 && CASE_ID < 600
+			// Case CS: body force OFF (surface BC만 활성 — momentum source 없음)
+			Real f_geo = 0.0;
+#else
 			Real f_geo = MOST_boundary * (us_ini * us_ini / ABL_h);
+#endif
 			tdux_dt0=P3[i].ftotalx*(buffer_type==0||MOST==1)+P1[i].fmx+f_geo*(buffer_type==0||MOST==1);									// initial x-directional acceleration
 
 			//tdux_dt0=P3[i].ftotalx*(buffer_type==0||MOST==1)+P1[i].fmx;									// initial x-directional acceleration
@@ -122,6 +127,7 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	if(i>=k_num_part2) return;
 	if(P1[i].i_type>=3) return;
 	if(P1[i].p_type>=1000) return;		// Immersed Boundary Method
+	if(P1[i].buffer_type==99) return;	// Interior fluid (inside buildings) — keep zeroed state from previous step
 	// if(P1[i].buffer_type==1) return;
 
 	Real tx0,ty0,tz0,xc,yc,zc;									// position
@@ -222,7 +228,8 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 			TP1[i].enthalpy=P2[i].enthalpy0+P3[i].denthalpy*t_dt;
 			TP1[i].temp=P1[i].temp;
 		}else{
-			TP1[i].temp=P2[i].temp0+P3[i].dtemp*t_dt*(buffer_type==0);
+			Real temp_new=P2[i].temp0+P3[i].dtemp*t_dt*(buffer_type==0);
+			TP1[i].temp=temp_new;
 		}
 	}
 	else{
@@ -238,8 +245,9 @@ __global__ void KERNEL_time_update_projection(const Real tdt,part1*P1,part1*TP1,
 	// else TP1[i].concn=P1[i].concn;
 
 	TP1[i].pres=P1[i].pres;
-	TP1[i].pres0=P1[i].pres;
+	TP1[i].pres0=P1[i].pres;   // incremental PPE anchor: store previous-step pres
 	TP1[i].flt_s=P1[i].flt_s;
+	TP1[i].MOST_buffer=P1[i].MOST_buffer;
 	TP1[i].m=P1[i].m;
 	TP1[i].ncell=P1[i].ncell;
 	TP1[i].h=P1[i].h;
@@ -426,4 +434,28 @@ __global__ void KERNEL_xsph3D(int_t*g_str,int_t*g_end,part1*P1)
 		P1[i].uz=uzi+tmpz/flt_s; 			// update z-directional position
 		//printf("tmpx=%f\n",tmpx/flt_s);
 	}
+}
+
+// =======================================================================
+// Time-averaging accumulation (Eulerian SPH)
+//   Adds current (ux,uy,uz,k_turb,e_turb) to running sums on each fluid
+//   particle. Called from ISPH_Calc.cuh after the corrector step, gated by
+//   simulation time >= AVG_START_TIME. The global counter avg_count is
+//   incremented once per call by thread 0. Divide by avg_count at output.
+// =======================================================================
+__global__ void KERNEL_accumulate_avg(part1* P1)
+{
+	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	// Counter: single thread increments, independent of per-particle early-return
+	if(i == 0) atomicAdd(&avg_count, 1u);
+
+	if(i >= k_num_part2) return;
+	if(P1[i].i_type > i_type_crt) return;   // skip dummy / outer-buffer
+	if(P1[i].p_type != FLUID) return;       // fluid only
+
+	P1[i].ux_avg     += P1[i].ux;
+	P1[i].uy_avg     += P1[i].uy;
+	P1[i].uz_avg     += P1[i].uz;
+	P1[i].k_turb_avg += P1[i].k_turb;
+	P1[i].e_turb_avg += P1[i].e_turb;
 }

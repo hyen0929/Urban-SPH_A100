@@ -22,6 +22,15 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		HP1[i].uz=0.0;
 		HP1[i].temp=300.0;
 		HP1[i].concn=0.0;
+		HP1[i].pres=0.0;
+		HP1[i].pres0=0.0;   // incremental PPE anchor
+
+		// Time-averaging accumulators zero-init
+		HP1[i].ux_avg=0.0;
+		HP1[i].uy_avg=0.0;
+		HP1[i].uz_avg=0.0;
+		HP1[i].k_turb_avg=0.0;
+		HP1[i].e_turb_avg=0.0;
 
 		// Initial condition selector
 		if(CASE_ID>100 && CASE_ID<200) {
@@ -29,10 +38,21 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			HP1[i].ux=Interpolate_ux_caseA(HP1[i].z,scale_factor);
 			HP1[i].k_turb=Interpolate_k_caseA(HP1[i].z,scale_factor);
 		}
-		if(CASE_ID>200 && CASE_ID<300) {
+		if(CASE_ID>200 && CASE_ID<210) {
 			scale_factor=0.08;
 			HP1[i].ux=Interpolate_ux_caseA(HP1[i].z,scale_factor);
 			//HP1[i].k_turb=Interpolate_k_caseC(HP1[i].z,scale_factor);
+		}
+		if(CASE_ID>210 && CASE_ID<220) {	// Stability comparison (unstable/neutral/stable)
+			HP1[i].ux  = Interpolate_ux_MOST_Neutral(HP1[i].z);
+			HP1[i].k_turb = Interpolate_k_MOST_Neutral(HP1[i].z);
+			HP1[i].e_turb = Interpolate_e_MOST_Neutral(HP1[i].z);  // MOST eps profile for k-eps
+			HP1[i].temp   = Interpolate_T_Linear_Stable(HP1[i].z);  // linear-init diagnostic
+		}
+		if(CASE_ID>500 && CASE_ID<600) {	// Case CS (single building block) — AS-style log-law init
+			HP1[i].ux     = Interpolate_ux_MOST_Neutral(HP1[i].z);
+			HP1[i].k_turb = Interpolate_k_MOST_Neutral(HP1[i].z);
+			HP1[i].e_turb = Interpolate_e_MOST_Neutral(HP1[i].z);
 		}
 		if(CASE_ID>300 && CASE_ID<400) {
 			scale_factor=1.0;
@@ -49,7 +69,42 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		if(CASE_ID==3001) {	// MOST validation test
 			HP1[i].ux=Interpolate_ux_MOST_Neutral(HP1[i].z);
 			HP1[i].k_turb=Interpolate_k_MOST_Neutral(HP1[i].z);
+			HP1[i].e_turb=Interpolate_e_MOST_Neutral(HP1[i].z);
 		}
+		if(CASE_ID==1500) {	// RANS/LES channel validation: band-limited random seed → bypass transition
+			// uy/uz = sum of 6 Fourier modes (random phases, wavelengths >= ~20dx).
+			// Smooth (no grid-scale 2dx content) yet broadband → triggers transition
+			// without exciting the numerical checkerboard mode.
+			Real xx=HP1[i].x, yy=HP1[i].y, zz=HP1[i].z;
+			Real Lx=200.0, Ly=80.0, Lz=80.0;
+			Real twoPI=2.0*PI;
+			Real py = sin(twoPI*(2.0*xx/Lx +            1.0*zz/Lz)+0.7)
+			        + sin(twoPI*(1.0*xx/Lx +1.0*yy/Ly + 2.0*zz/Lz)+2.1)
+			        + sin(twoPI*(3.0*xx/Lx +2.0*yy/Ly           )+4.0)
+			        + sin(twoPI*(1.0*xx/Lx +            3.0*zz/Lz)+5.3)
+			        + sin(twoPI*(2.0*xx/Lx +3.0*yy/Ly + 1.0*zz/Lz)+1.1)
+			        + sin(twoPI*(3.0*xx/Lx +1.0*yy/Ly + 2.0*zz/Lz)+3.8);
+			Real pz = sin(twoPI*(2.0*xx/Lx +            2.0*zz/Lz)+1.4)
+			        + sin(twoPI*(1.0*xx/Lx +1.0*yy/Ly + 1.0*zz/Lz)+3.2)
+			        + sin(twoPI*(3.0*xx/Lx +2.0*yy/Ly + 1.0*zz/Lz)+0.3)
+			        + sin(twoPI*(2.0*xx/Lx +4.0*yy/Ly           )+5.9)
+			        + sin(twoPI*(1.0*xx/Lx +2.0*yy/Ly + 3.0*zz/Lz)+2.6)
+			        + sin(twoPI*(3.0*xx/Lx +            2.0*zz/Lz)+4.7);
+			HP1[i].ux=CHANNEL_U0;
+			HP1[i].uy=(1.0/6.0)*py;   // peak ~±1 m/s, RMS ~0.3
+			HP1[i].uz=(1.0/6.0)*pz;
+			HP1[i].k_turb=0.0;
+			HP1[i].e_turb=0.0;
+		}
+
+		// IBM building surface: initialize to wall temperature (T_con)
+		if(HP1[i].p_type >= 1000) {
+			HP1[i].temp = T_con;
+			HP1[i].ux = 0.0;
+			HP1[i].uy = 0.0;
+			HP1[i].uz = 0.0;
+		}
+
 
 		// // Inner building particle ux=0.0
 		// if(HP1[i].p_type==1 && zi<0.2){
@@ -74,7 +129,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 
 		// Interior fluid flag: p_type=99 from Python preprocessing → buffer_type=99
 		if(HP1[i].p_type==99) {
-			//HP1[i].buffer_type=99;
+			HP1[i].buffer_type=99;
 			HP1[i].p_type=1;
 			// HP1[i].ux=0.0;
 			// HP1[i].uy=0.0;
@@ -87,14 +142,11 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			HP1[i].rho=1.225;
 		}
 
-		if(HP1[i].p_type==1000){
-			HP1[i].x=HP1[i].x+1.25;
-		}
 
 		if (open_boundary>0)			// (CAUTION)
 		{
 			// if (HP1[i].p_type>=0) HP1[i].ux=Inlet_Velocity;
-			if(HP1[i].p_type==1||HP1[i].p_type==-1){
+			if(HP1[i].p_type==1){
 
 				if(HP1[i].y<L_left) {
 					HP1[i].buffer_type=3;
@@ -121,7 +173,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 					HP1[i].buffer_type=5;
 				}
 
-				if(HP1[i].p_type==1 && HP1[i].x>L_MOST_x0 && HP1[i].x<L_MOST_xmax && HP1[i].z>2.4f && HP1[i].z<2.6f){
+				if(HP1[i].p_type==1 && HP1[i].x>L_MOST_x0 && HP1[i].x<L_MOST_xmax && HP1[i].z>L_MOST_z_lo && HP1[i].z<L_MOST_z_hi){
 					HP1[i].MOST_buffer=1;
 				}
 
@@ -559,6 +611,21 @@ __global__ void inner_outer_particle(part1*P1,int_t tid){
 
 }
 ////////////////////////////////////////////////////////////////////////
+// Deactivate IBM (building) particles for a building-free run.
+// Sets i_type=3 on every p_type==1000 particle, which makes them:
+//   - skipped as target i by every kernel  (i_type>i_type_crt guard)
+//   - dropped into the dummy cell k_num_cells by KERNEL_index_particle_to_cell
+//     -> never visited as a neighbour j either.
+// One-shot: launch once at init. i_type=3 is preserved afterwards
+// (inner_outer_particle / initial_particle early-return on i_type==3).
+// Toggle: Parameters.cuh  #define DEACTIVATE_IBM
+__global__ void KERNEL_deactivate_IBM(part1*P1)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].p_type==1000) P1[i].i_type=3;
+}
+////////////////////////////////////////////////////////////////////////
 __global__ void KERNEL_reorder(int_t*g_idx,int_t*p_idx,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part1*SP1,part2*SP2)
 {
 	extern __shared__ int sharedHash[];
@@ -663,7 +730,7 @@ __global__ void KERNEL_index_particle_to_cell(int_t*g_idx,int_t*p_idx,part1*P1)
 	if(idx>=k_num_part2) return;
 	// Not in Each GPUs Domain
 	if(P1[idx].i_type==3){
-		g_idx[idx]=k_num_cells;
+		g_idx[idx]=k_num_cells-1;
 		p_idx[idx]=idx;
 	}
 	else {
@@ -684,7 +751,7 @@ __global__ void KERNEL_index_particle_to_cell(int_t*g_idx,int_t*p_idx,part1*P1)
 		g_idx[idx]=idx_cell(icell,jcell,kcell);
 	}
 
-	if(g_idx[idx]==k_num_cells && P1[idx].i_type!=3) printf("itype %d \n", P1[idx].i_type);
+	if(g_idx[idx]==k_num_cells-1 && P1[idx].i_type!=3) printf("itype %d \n", P1[idx].i_type);
 }
 
 __global__ void KERNEL_index_particle_to_cell_LDM(int_t*g_idx,int_t*p_idx,L_part1*P1)
@@ -693,7 +760,7 @@ __global__ void KERNEL_index_particle_to_cell_LDM(int_t*g_idx,int_t*p_idx,L_part
 	if(idx>=k_num_part_LDM) return;
 	// Not in Each GPUs Domain
 	if(P1[idx].i_type==3){
-		g_idx[idx]=k_num_cells;
+		g_idx[idx]=k_num_cells-1;
 		p_idx[idx]=idx;
 	}
 	else {
@@ -714,7 +781,7 @@ __global__ void KERNEL_index_particle_to_cell_LDM(int_t*g_idx,int_t*p_idx,L_part
 		g_idx[idx]=idx_cell(icell,jcell,kcell);
 	}
 
-	if(g_idx[idx]==k_num_cells && P1[idx].i_type!=3) printf("itype %d \n", P1[idx].i_type);
+	if(g_idx[idx]==k_num_cells-1 && P1[idx].i_type!=3) printf("itype %d \n", P1[idx].i_type);
 }
 
 __global__ void KERNEL_index_particle_to_block(int_t*b_idx,int_t*p_idx,part1*P1)

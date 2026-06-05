@@ -214,7 +214,7 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 								tdwy=(ygnode_i-yj)/tdist * tdwij;
 								tdwz=(zgnode_i-zj)/tdist * tdwij;
 
-								//apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
+								apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
 
 								Real neighbor = (ptype_j==1)*(buffer_type_j==0);
 
@@ -465,9 +465,9 @@ __global__ void KERNEL_Neumann_boundary_buffer3D(int_t*g_str,int_t*g_end,part1*P
 	else{
 		if(P1[i].buffer_type==2){
 			P1[i].pres = tpres/tflt_s;
-			P1[i].ux=tux/tflt_s;
-			P1[i].uy=tuy/tflt_s;
-			P1[i].uz=tuz/tflt_s;
+			// P1[i].ux=tux/tflt_s;
+			// P1[i].uy=tuy/tflt_s;
+			// P1[i].uz=tuz/tflt_s;
 		}
 		else{
 			P1[i].pres = tpres/tflt_s;
@@ -831,6 +831,87 @@ __global__ void KERNEL_periodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 	return;
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Channel-flow validation (CASE_ID 5001): x-direction periodic boundary.
+// Mirrors KERNEL_periodic_boundary3D but wraps the streamwise (x) direction
+// across the fluid span [L2,L3]. Inlet/Outlet buffer particles copy the exact
+// field values of their periodic image on the opposite side.
+//////////////////////////////////////////////////////////////////////////////
+__global__ void KERNEL_xperiodic_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].buffer_type!=Inlet && P1[i].buffer_type!=Outlet) return;
+	if(P1[i].p_type>=1000) return;
+
+	int_t icell,jcell,kcell;
+	Real xi,yi,zi,xgnode_i,ygnode_i,zgnode_i;
+	Real hi,search_range;
+	Real tux,tuy,tuz,tpres,ttemp,tempk,tempe;
+
+	hi=P1[i].h;
+	search_range=k_search_kappa*hi;
+
+	xi=P1[i].x; yi=P1[i].y; zi=P1[i].z;
+
+	Real xperiod=L3-L2;
+	if(P1[i].buffer_type==Inlet) xgnode_i=xi+xperiod;	// inlet buffer → image near outlet
+	else                         xgnode_i=xi-xperiod;	// outlet buffer → image near inlet
+	ygnode_i=yi;
+	zgnode_i=zi;
+
+	tux=tuy=tuz=tpres=ttemp=tempk=tempe=0.0;
+
+	if((k_x_max==k_x_min)){icell=0;}
+	else{icell=min(floor((xgnode_i-k_x_min)/k_dcell),k_NI-1);}
+	if((k_y_max==k_y_min)){jcell=0;}
+	else{jcell=min(floor((ygnode_i-k_y_min)/k_dcell),k_NJ-1);}
+	if((k_z_max==k_z_min)){kcell=0;}
+	else{kcell=min(floor((zgnode_i-k_z_min)/k_dcell),k_NK-1);}
+	if(icell<0) icell=0;	if(jcell<0) jcell=0;	if(kcell<0) kcell=0;
+
+	int_t ncell=P1[i].ncell;
+	int_t flag=0;
+	for(int_t z=-ncell;z<=ncell;z++){
+		for(int_t y=-ncell;y<=ncell;y++){
+			for(int_t x=-ncell;x<=ncell;x++){
+				if(flag==1) continue;
+				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
+				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+				if(g_str[k]!=cu_memset){
+					int_t fend=g_end[k];
+					for(int_t j=g_str[k];j<fend;j++){
+						Real xj=P1[j].x,yj=P1[j].y,zj=P1[j].z;
+						Real tdist=sqrt((xgnode_i-xj)*(xgnode_i-xj)+(ygnode_i-yj)*(ygnode_i-yj)+(zgnode_i-zj)*(zgnode_i-zj));
+						if(tdist<0.001){	// exact periodic image
+							tux=P1[j].ux; tuy=P1[j].uy; tuz=P1[j].uz;
+							tpres=P1[j].pres; ttemp=P1[j].temp;
+							tempk=P1[j].k_turb; tempe=P1[j].e_turb;
+							flag=1;
+						}
+					}
+				}
+			}
+		}
+	}
+	P1[i].ux=tux; P1[i].uy=tuy; P1[i].uz=tuz;
+	P1[i].pres=tpres; P1[i].temp=ttemp;
+	P1[i].k_turb=tempk; P1[i].e_turb=tempe;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Channel-flow validation: constant streamwise body force (mean pressure
+// gradient surrogate). Added to the non-pressure acceleration so it enters
+// the predictor naturally.
+//////////////////////////////////////////////////////////////////////////////
+__global__ void KERNEL_channel_bodyforce3D(part1*P1,part3*P3)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].p_type!=1) return;
+	P3[i].ftotalx += CHANNEL_FX;
+}
+
 __global__ void KERNEL_freeslip_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
@@ -859,8 +940,8 @@ __global__ void KERNEL_freeslip_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part
 	// calculate ghost node
 	xgnode_i=xi;
 	ygnode_i=yi;
-	//zgnode_i=2*(L_ceiling)-zi;
-	zgnode_i=zi;
+	zgnode_i=2*(L_ceiling)-zi;
+	//zgnode_i=zi;
 
 	trho=tdrho_x=tdrho_y=0.0;
 	tux=tuy=tuz=0.0;

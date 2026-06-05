@@ -1,4 +1,22 @@
 //-------------------------------------------------------------------------------------------------
+// Implicit-PPE file-scope state (only used when Parameters.cuh IMPLICIT_PPE == 1).
+// Lazily allocated inside SOPHIA_single_ISPH on first call (count==0).
+// Lives across all SOPHIA_single_ISPH calls; freed implicitly at process exit.
+//-------------------------------------------------------------------------------------------------
+#if IMPLICIT_PPE
+static Real*  g_dev_pres_old      = NULL;   // snapshot of P1[i].pres before each Jacobi sweep
+static Real*  g_dev_pres_delta    = NULL;   // per-particle |p_new - p_old|, input to Max reduce
+static Real*  g_dev_bi            = NULL;   // per-particle |bi| = |rho*div(u*)/dt|, written by PPE_prep
+static Real*  g_dev_ppe_resid     = NULL;   // per-particle |A*p - b| = |PPE2*pres - PPE1|, true residual
+static Real*  g_d_pres_delta_max  = NULL;   // device scalar: max Jacobi iter delta
+static Real*  g_d_bi_max          = NULL;   // device scalar: max |bi|
+static Real*  g_d_resid_max       = NULL;   // device scalar: max |A*p - b|
+static void*  g_dev_resid_storage = NULL;   // CUB Max reduce temp storage (shared by all 3 reduces)
+static size_t g_resid_storage_bytes = 0;
+static FILE*  g_fp_ppe_log        = NULL;   // ./<CASE_NAME>/PPE_iter_log.txt
+#endif
+
+//-------------------------------------------------------------------------------------------------
 // 모든 입자 계산을 수행하는 주함수 + LDM
 //-------------------------------------------------------------------------------------------------
 void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,int_t*g_str,int_t*g_end,
@@ -69,6 +87,8 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	}
 
 	// LDM 주변입자 검색 (농도 계산)
+	// Gate: LDM dormant until time >= AVG_START_TIME (release / advection / NNPS all skipped)
+	if(time >= (Real)AVG_START_TIME){
 	if(count%freq_LDM==0){
 
 		b.x=(num_part_LDM-1)/t.x+1;
@@ -102,6 +122,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
 		pthread_barrier_wait(&barrier);
 	}
+	}  // end of AVG_START_TIME gate (LDM NNPS block)
 
 //-------------------------------------------------------------------------------------------------
 // 계산 준비: gradient correction, filter, reference density, p_type switch, penetration, density gradient
@@ -109,12 +130,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	
 	b.x=(num_part2-1)/t.x+1;
 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
-	if(count==0){
-		KERNEL_clc_IB_normal_vector3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
-		cudaDeviceSynchronize();
-		// KERNEL_detect_interior_fluid3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
-		// cudaDeviceSynchronize();
-	}
 	gradient_correction(g_str,g_end,dev_SP1,dev_P3);
 	cudaDeviceSynchronize();
 	KERNEL_clc_gradient_correction_3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3);
@@ -123,6 +138,16 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	// filter, reference density, p_type switch, penetration, normal gradient etc
 	KERNEL_clc_prep3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3,count,dt);
 	cudaDeviceSynchronize();
+
+	// standard k-epsilon (Launder-Spalding) — used for validation against DDF
+	if(turbulence_model==K_E){
+		KERNEL_clc_ke_turb3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+		cudaDeviceSynchronize();
+		KERNEL_update_turbulence<<<b,t>>>(dt,dev_SP1,dev_P3);
+		cudaDeviceSynchronize();
+		KERNEL_turb_viscosity<<<b,t>>>(dev_SP1,dev_P3);
+		cudaDeviceSynchronize();
+	}
 
 	// Velocity condition for wall
 	b.x=(num_part2-1)/t.x+1;
@@ -135,8 +160,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		b.x=(num_part2-1)/t.x+1;
 		KERNEL_MOST_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_P3,count,dt,1);
 		cudaDeviceSynchronize();
-		// KERNEL_turbulent_viscosity3D<<<b,t>>>(dev_SP1);
-		// cudaDeviceSynchronize();
 	}
 
 	if(count==0){
@@ -152,7 +175,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	KERNEL_advection_force3D<<<b,t>>>(1,g_str,g_end,dev_SP1,dev_SP2,dev_P3,count);
 	cudaDeviceSynchronize();
 
-
 //-------------------------------------------------------------------------------------------------
 // PREDICTOR (Optional)
 //-------------------------------------------------------------------------------------------------
@@ -162,12 +184,6 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		KERNEL_clc_projection<<<b,t>>>(count,dt,time,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
-
-	// b.x=(num_part2-1)/t.x+1;
-	// KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// cudaDeviceSynchronize();
-	// KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
-	// cudaDeviceSynchronize();
 
 //-------------------------------------------------------------------------------------------------
 // Immersed Boundary Method (IBM)
@@ -181,24 +197,140 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	IBM_spreading_interpolation3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
-	// KERNEL_time_update_buffer<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
-	// cudaDeviceSynchronize();
-
 	IBM_corrector<<<b,t>>>(dt_structure,time,dev_SP1,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
+	// Direct forcing: u** = u* + fb [m/s], PPE는 u**의 div로 풀이.
 	IBM_corrector_fluid<<<b,t>>>(dt,time,dev_SP1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 
-	// Zero velocity for interior fluid particles (inside buildings)
+	// Zero velocity/temp for interior fluid particles (inside buildings) before PPE
 	// KERNEL_zero_interior_velocity<<<b,t>>>(dev_SP1);
 	// cudaDeviceSynchronize();
+
 
 //-------------------------------------------------------------------------------------------------
 // 압력 계산
 //-------------------------------------------------------------------------------------------------
 	//For initial condition(Neumann boundary)
 
+// #if IMPLICIT_PPE
+// 	//--- Implicit Jacobi PPE: iterate up to maxIteration, early-exit on max|delta p| < tol ---
+// 	// Tracks 3 metrics per step:
+// 	//   - Jacobi delta:    max|p^{k+1} - p^k|  (iteration convergence indicator, early-exit gate)
+// 	//   - max|bi|:         max|rho*div(u*)/dt| (input incompressibility error from predictor)
+// 	//   - max|A*p - b|:    true PPE residual   (proportional to |div(u^{n+1})|, the real metric)
+// 	b.x=(num_part2-1)/t.x+1;
+
+// 	// Lazy init (once, on first SOPHIA_single_ISPH call)
+// 	if(g_dev_pres_old==NULL){
+// 		cudaMalloc((void**)&g_dev_pres_old,    sizeof(Real)*num_part2);
+// 		cudaMalloc((void**)&g_dev_pres_delta,  sizeof(Real)*num_part2);
+// 		cudaMalloc((void**)&g_dev_bi,          sizeof(Real)*num_part2);
+// 		cudaMalloc((void**)&g_dev_ppe_resid,   sizeof(Real)*num_part2);
+// 		cudaMalloc((void**)&g_d_pres_delta_max,sizeof(Real));
+// 		cudaMalloc((void**)&g_d_bi_max,        sizeof(Real));
+// 		cudaMalloc((void**)&g_d_resid_max,     sizeof(Real));
+// 		cudaMemset(g_dev_pres_old,   0, sizeof(Real)*num_part2);
+// 		cudaMemset(g_dev_pres_delta, 0, sizeof(Real)*num_part2);
+// 		cudaMemset(g_dev_bi,         0, sizeof(Real)*num_part2);
+// 		cudaMemset(g_dev_ppe_resid,  0, sizeof(Real)*num_part2);
+// 		// CUB Max-reduce temp storage (sized via dummy call — same array length for all 3 reduces)
+// 		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+// 		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
+// 		cudaMalloc(&g_dev_resid_storage, g_resid_storage_bytes);
+// 		if(tid==0){
+// 			char fn[512];
+// 			sprintf(fn, "./%s/PPE_iter_log.txt", OUTPUT_CASE_NAME);
+// 			g_fp_ppe_log = fopen(fn, "w");
+// 			if(g_fp_ppe_log){
+// 				fprintf(g_fp_ppe_log, "# IMPLICIT_PPE Jacobi solver log\n");
+// 				fprintf(g_fp_ppe_log, "# tolerance=%g  minIter=%d  maxIter=%d\n",
+// 				        (double)PPE_TOLERANCE, (int)minIteration, (int)maxIteration);
+// 				fprintf(g_fp_ppe_log, "# bi_max     = |rho*div(u*)/dt|_inf   (input divergence; same every iter)\n");
+// 				fprintf(g_fp_ppe_log, "# resid_max  = |A*p_final - b|_inf    (true PPE residual; ~|div(u^{n+1})|*rho/dt)\n");
+// 				fprintf(g_fp_ppe_log, "# delta_p    = max|p^{k+1} - p^k|     (Jacobi iteration delta; early-exit gate)\n");
+// 				fprintf(g_fp_ppe_log, "# step\ttime\titer_used\tdelta_p\tbi_max\tresid_max\tconverged\n");
+// 				fflush(g_fp_ppe_log);
+// 			}
+// 		}
+// 	}
+
+// 	// Snapshot pres -> pres_old so the first delta is well-defined
+// 	KERNEL_snapshot_pres<<<b,t>>>(dev_SP1, g_dev_pres_old);
+// 	cudaDeviceSynchronize();
+
+// 	int_t ppe_iter_used = 0;
+// 	Real  ppe_delta_p   = 0.0f;
+// 	Real  ppe_bi_max    = 0.0f;
+// 	Real  ppe_resid_max = 0.0f;
+// 	int   ppe_converged = 0;
+// 	int_t maxit_safe = (maxIteration>0) ? maxIteration : 1;
+// 	int_t minit_safe = (minIteration>0) ? minIteration : 1;
+
+// 	for(int_t it=0; it<maxit_safe; it++){
+// 		// Zero bi array so non-fluid slots don't pollute Max reduce (PPE_prep skips them via early return)
+// 		cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
+// 		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
+// 		cudaDeviceSynchronize();
+// 		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
+// 		cudaDeviceSynchronize();
+// 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+// 		cudaDeviceSynchronize();
+
+// 		// Compute per-particle |p_new - p_old|, snapshot p -> pres_old
+// 		KERNEL_compute_pres_delta<<<b,t>>>(dev_SP1, g_dev_pres_old, g_dev_pres_delta);
+// 		cudaDeviceSynchronize();
+
+// 		// Max reduce -> device scalar, copy to host
+// 		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+// 		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
+// 		cudaDeviceSynchronize();
+// 		cudaMemcpy(&ppe_delta_p, g_d_pres_delta_max, sizeof(Real), cudaMemcpyDeviceToHost);
+
+// 		ppe_iter_used = it+1;
+// 		if(ppe_iter_used >= minit_safe && ppe_delta_p < PPE_TOLERANCE){
+// 			ppe_converged = 1;
+// 			break;
+// 		}
+// 	}
+
+// 	// After loop: one extra PPE_prep with converged pres to refresh PPE1/PPE2,
+// 	// then compute true residual |A*p - b|. bi is also refreshed (same value as last iter — u* unchanged).
+// 	cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
+// 	KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
+// 	cudaDeviceSynchronize();
+// 	KERNEL_compute_ppe_residual<<<b,t>>>(dev_SP1, g_dev_ppe_resid);
+// 	cudaDeviceSynchronize();
+
+// 	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+// 	                       g_dev_bi, g_d_bi_max, num_part2);
+// 	cudaDeviceSynchronize();
+// 	cudaMemcpy(&ppe_bi_max, g_d_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
+
+// 	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+// 	                       g_dev_ppe_resid, g_d_resid_max, num_part2);
+// 	cudaDeviceSynchronize();
+// 	cudaMemcpy(&ppe_resid_max, g_d_resid_max, sizeof(Real), cudaMemcpyDeviceToHost);
+
+// 	// Per-step logging (only tid==0)
+// 	if(tid==0){
+// 		if(g_fp_ppe_log){
+// 			fprintf(g_fp_ppe_log, "%d\t%.6g\t%d\t%.6e\t%.6e\t%.6e\t%d\n",
+// 			        (int)count, (double)time, (int)ppe_iter_used,
+// 			        (double)ppe_delta_p, (double)ppe_bi_max,
+// 			        (double)ppe_resid_max, ppe_converged);
+// 			fflush(g_fp_ppe_log);
+// 		}
+// 		if((count%50)==0){
+// 			printf("PPE(implicit): iter=%d / %d, dp=%.3e, |bi|=%.3e, |A*p-b|=%.3e, conv=%d\n",
+// 			       (int)ppe_iter_used, (int)maxit_safe,
+// 			       (double)ppe_delta_p, (double)ppe_bi_max,
+// 			       (double)ppe_resid_max, ppe_converged);
+// 		}
+// 	}
+// #else
+	//--- EISPH (Explicit ISPH, 1-sweep Jacobi: current production) ---
 	for(int_t it=0;it<=0;it++){   // For iterative(implicit) pressure solver
 		// PPE.cuh
 		b.x=(num_part2-1)/t.x+1;
@@ -210,6 +342,7 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
 		cudaDeviceSynchronize();
 	}
+//#endif
 
 //-------------------------------------------------------------------------------------------------
 // 압력힘 계산
@@ -226,9 +359,8 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	KERNEL_time_update_projection<<<b,t>>>(dt,dev_SP1,dev_P1,dev_SP2,dev_P2,dev_P3,count);
 	cudaDeviceSynchronize();
 
-	// // Zero interior velocity after time integration
-	// KERNEL_zero_interior_velocity<<<b,t>>>(dev_P1);
-	// cudaDeviceSynchronize();
+	// Interior particles skip time update (buffer_type==99 early return in KERNEL_time_update_projection)
+	// → dev_P1 retains zeroed state; no separate zeroing needed here
 
 	// // Monitor target particle (once per step, after all forces applied)
 	// KERNEL_monitor_particle<<<b,t>>>(dev_P1, dev_P3, count, 4);
@@ -242,24 +374,34 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 	KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
  	// KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+	//KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	// KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	cudaDeviceSynchronize();
+	//cudaDeviceSynchronize();
 	KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
 	KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
 	cudaDeviceSynchronize();
-	// if(dim==3) KERNEL_Recycling3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
-	// cudaDeviceSynchronize();
+
+// #if CASE_ID >= 500 && CASE_ID < 600
+// 	// Case CS: sustain inlet buffer at log-law profile (uses us_update; with MOST off it stays at us_ini)
+// 	if(dim==3) KERNEL_Recycling3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+// 	cudaDeviceSynchronize();
+// #endif
 
 	KERNEL_compute_vorticity3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
 	cudaDeviceSynchronize();
 
+	// Time-averaging accumulation (gated by AVG_START_TIME defined in Parameters.cuh / case_config.cuh)
+	if(time >= (Real)AVG_START_TIME){
+		KERNEL_accumulate_avg<<<b,t>>>(dev_P1);
+		cudaDeviceSynchronize();
+	}
+
 //-------------------------------------------------------------------------------------------------
-// LDM coupling
+// LDM coupling — gated by AVG_START_TIME (skip predictor/advection/deposition/conc until steady state)
 //-------------------------------------------------------------------------------------------------
 
-	if((count%freq_LDM==0)){
+	if(time >= (Real)AVG_START_TIME && (count%freq_LDM==0)){
 		// b.x=(num_part_LDM-1)/t.x+1;
 		// particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
 		if(time_type==Pre_Cor){
@@ -271,6 +413,11 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 		b.x=(num_part_LDM-1)/t.x+1;
 		if(CASE_ID<2000)KERNEL_time_update_LDM<<<b,t>>>(freq_LDM*dt,time,time_end,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
 		else if(CASE_ID>2000)KERNEL_time_update_LDM_direct<<<b,t>>>(freq_LDM*dt,time,g_str,g_end,dev_LP1,dev_LP2,dev_P1);
+		cudaDeviceSynchronize();
+
+		// Dry deposition and resuspension (functions_DD.cuh)
+		KERNEL_dry_deposition<<<b,t>>>(freq_LDM*dt, time, dev_LP1, (Real)MOST_z0);
+		cudaDeviceSynchronize();
 
 		// LDM verification: U_mean = 0.3 m/s, D = 0.01 m^2/s
 		// Case 1 (pure diffusion):     U_mean=0.0, D=0.01
@@ -329,23 +476,21 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
 
 		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
 		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
-		if(count%10000==0)save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);     // Total fluid particles
-		if(count%100==0)save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
-		
+		//save_vtk_bin_single_fluid_CaseA(file_P1,file_P2,file_P3);     // Total fluid particles
+		save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
+		save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
+		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
 		
 		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
 		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
 		//cudaDeviceSynchronize();
 	}
 
-	if(CASE_ID<2004 && count%100==0){
+	if(count%100==0){
 		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
 		save_vtk_bin_single_LDM(file_LP1);
 	}
 
-	if(count%25==0){
-		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
-	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -544,6 +689,16 @@ void*ISPH_Calc(void*arg){
 	cudaMemcpy(dev_P1,DHP1[tid],num_part2*sizeof(part1),cudaMemcpyHostToDevice);	// single gpu 이면 그냥 HP1을 device에 복사
 	pthread_barrier_wait(&barrier);
 
+#if DEACTIVATE_IBM
+	// Building-free run: deactivate IBM (p_type==1000) particles (i_type=3).
+	{
+		dim3 t_ibm(128), b_ibm((num_part2-1)/128+1);
+		KERNEL_deactivate_IBM<<<b_ibm,t_ibm>>>(dev_P1);
+		cudaDeviceSynchronize();
+		if(tid==0) printf("[DEACTIVATE_IBM] IBM (p_type=1000) particles deactivated -> i_type=3\n");
+	}
+#endif
+
 	// Host 입자정보(HP1)를 분할하여(DHP1) Device로 복사(dev_P1) (LDM)
 	DHLP1[tid]=(L_part1*)malloc(num_part_LDM*sizeof(L_part1));
 	memset(DHLP1[tid],0,sizeof(L_part1)*num_part_LDM);
@@ -566,26 +721,63 @@ void*ISPH_Calc(void*arg){
 	//-------------------------------------------------------------------------------------------------
 
 	// host
-	Real *max_umag0,*max_rho0,*max_ftotal0;
+	Real *max_umag0,*max_rho0,*max_ftotal0,*max_temp0,*min_temp0,*max_fbz0,*max_uz0;
 	max_umag0=(Real*)malloc(sizeof(Real));
 	max_rho0=(Real*)malloc(sizeof(Real));
 	max_ftotal0=(Real*)malloc(sizeof(Real));
-	max_umag0[0]=max_ftotal0[0]=max_rho0[0]=0.0;
+	max_temp0=(Real*)malloc(sizeof(Real));
+	min_temp0=(Real*)malloc(sizeof(Real));
+	max_fbz0=(Real*)malloc(sizeof(Real));
+	max_uz0=(Real*)malloc(sizeof(Real));
+	max_umag0[0]=max_ftotal0[0]=max_rho0[0]=max_temp0[0]=0.0;
+	min_temp0[0]=0.0; max_fbz0[0]=0.0; max_uz0[0]=0.0;
+
+	// Cold-spot diagnostic: host/device buffers for ArgMin (storage allocated below near other CUB temp storage)
+	cub::KeyValuePair<int,Real> *h_min_kv=(cub::KeyValuePair<int,Real>*)malloc(sizeof(cub::KeyValuePair<int,Real>));
+	cub::KeyValuePair<int,Real> *d_min_kv;
+	cudaMalloc((void**)&d_min_kv,sizeof(cub::KeyValuePair<int,Real>));
+	void* dev_argmin_storage=NULL;
+	size_t argmin_storage_bytes=0;
+
+	// Hot-u diagnostic: find particle with max |u| magnitude (= velocity-limit clipping candidate)
+	cub::KeyValuePair<int,Real> *h_max_u_kv=(cub::KeyValuePair<int,Real>*)malloc(sizeof(cub::KeyValuePair<int,Real>));
+	cub::KeyValuePair<int,Real> *d_max_u_kv;
+	cudaMalloc((void**)&d_max_u_kv,sizeof(cub::KeyValuePair<int,Real>));
+	void* dev_argmax_storage=NULL;
+	size_t argmax_storage_bytes=0;
+	part1 cold_p1;
 
 	// device
-	Real*max_rho,*max_umag,*max_ft,*d_max_umag0,*d_max_rho0,*d_max_ftotal0;
+	Real*max_rho,*max_umag,*max_ft,*max_temp,*min_temp,*max_fbz,*max_uz;
+	Real*d_max_umag0,*d_max_rho0,*d_max_ftotal0,*d_max_temp0,*d_min_temp0,*d_max_fbz0,*d_max_uz0;
 	cudaMalloc((void**)&max_rho,sizeof(Real)*num_part2);
 	cudaMalloc((void**)&max_umag,sizeof(Real)*num_part2);
 	cudaMalloc((void**)&max_ft,sizeof(Real)*num_part2);
+	cudaMalloc((void**)&max_temp,sizeof(Real)*num_part2);
+	cudaMalloc((void**)&min_temp,sizeof(Real)*num_part2);
+	cudaMalloc((void**)&max_fbz,sizeof(Real)*num_part2);
+	cudaMalloc((void**)&max_uz,sizeof(Real)*num_part2);
 	cudaMalloc((void**)&d_max_umag0,sizeof(Real));
 	cudaMalloc((void**)&d_max_rho0,sizeof(Real));
 	cudaMalloc((void**)&d_max_ftotal0,sizeof(Real));
+	cudaMalloc((void**)&d_max_temp0,sizeof(Real));
+	cudaMalloc((void**)&d_min_temp0,sizeof(Real));
+	cudaMalloc((void**)&d_max_fbz0,sizeof(Real));
+	cudaMalloc((void**)&d_max_uz0,sizeof(Real));
 	cudaMemset(max_umag,0,sizeof(Real)*num_part2);
 	cudaMemset(max_rho,0,sizeof(Real)*num_part2);
 	cudaMemset(max_ft,0,sizeof(Real)*num_part2);
+	cudaMemset(max_temp,0,sizeof(Real)*num_part2);
+	cudaMemset(min_temp,0,sizeof(Real)*num_part2);
+	cudaMemset(max_fbz,0,sizeof(Real)*num_part2);
+	cudaMemset(max_uz,0,sizeof(Real)*num_part2);
 	cudaMemset(d_max_umag0,0,sizeof(Real));
 	cudaMemset(d_max_rho0,0,sizeof(Real));
 	cudaMemset(d_max_ftotal0,0,sizeof(Real));
+	cudaMemset(d_max_temp0,0,sizeof(Real));
+	cudaMemset(d_min_temp0,0,sizeof(Real));
+	cudaMemset(d_max_fbz0,0,sizeof(Real));
+	cudaMemset(d_max_uz0,0,sizeof(Real));
 
 	//-------------------------------------------------------------------------------------------------
 	// 정렬(Sorting)을 위한 CUB 라이브러리 변수 준비
@@ -603,10 +795,29 @@ void*ISPH_Calc(void*arg){
 	cub::DeviceRadixSort::SortPairs(dev_sort_storage,sort_storage_bytes,g_idx_in,g_idx,p_idx_in,p_idx,num_part2);
 	cub::DeviceRadixSort::SortPairs(dev_sort_storage_LDM,sort_storage_bytes_LDM,g_idx_in_LDM,g_idx_LDM,p_idx_in_LDM,p_idx_LDM,num_part_LDM);
 	cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_umag,d_max_umag0,num_part2);
+	cub::DeviceReduce::ArgMin(dev_argmin_storage,argmin_storage_bytes,min_temp,d_min_kv,num_part2);
+	cub::DeviceReduce::ArgMax(dev_argmax_storage,argmax_storage_bytes,max_umag,d_max_u_kv,num_part2);
 	cudaDeviceSynchronize();
 	cudaMalloc((void**)&dev_sort_storage,sort_storage_bytes);
 	cudaMalloc((void**)&dev_sort_storage_LDM,sort_storage_bytes_LDM);
 	cudaMalloc((void**)&dev_max_storage,max_storage_bytes);
+	cudaMalloc((void**)&dev_argmin_storage,argmin_storage_bytes);
+	cudaMalloc((void**)&dev_argmax_storage,argmax_storage_bytes);
+
+	// Domain-integrated diagnostics buffers (Σk_turb, Σ½|u|² over fluid)
+	Real *diag_kt, *diag_uu, *d_sum_kt, *d_sum_uu;
+	Real sum_kt0=0.0, sum_uu0=0.0;
+	cudaMalloc((void**)&diag_kt, sizeof(Real)*num_part2);
+	cudaMalloc((void**)&diag_uu, sizeof(Real)*num_part2);
+	cudaMalloc((void**)&d_sum_kt, sizeof(Real));
+	cudaMalloc((void**)&d_sum_uu, sizeof(Real));
+	cudaMemset(diag_kt,0,sizeof(Real)*num_part2);
+	cudaMemset(diag_uu,0,sizeof(Real)*num_part2);
+	void *dev_sum_storage=NULL;
+	size_t sum_storage_bytes=0;
+	cub::DeviceReduce::Sum(dev_sum_storage, sum_storage_bytes, diag_kt, d_sum_kt, num_part2);
+	cudaMalloc((void**)&dev_sum_storage, sum_storage_bytes);
+
 	pthread_barrier_wait(&barrier);
 
 	//-------------------------------------------------------------------------------------------------
@@ -673,23 +884,71 @@ void*ISPH_Calc(void*arg){
 				dim3 t,b;
 				t.x=128;
 				b.x=(num_part2-1)/t.x+1;
-				kernel_copy_max<<<b,t>>>(dev_P1,dev_SP2,dev_SP3,max_rho,max_ft,max_umag);
+				kernel_copy_max<<<b,t>>>(dev_P1,dev_SP2,dev_SP3,max_rho,max_ft,max_umag,max_temp,min_temp,max_fbz,max_uz);
 				cudaDeviceSynchronize();
 
 				// Find Max Velocity & Force using CUB - TID=0
 				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_umag,d_max_umag0,num_part2);
 				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_rho,d_max_rho0,num_part2);
 				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_ft,d_max_ftotal0,num_part2);
+				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_temp,d_max_temp0,num_part2);
+				cub::DeviceReduce::Min(dev_max_storage,max_storage_bytes,min_temp,d_min_temp0,num_part2);
+				cub::DeviceReduce::ArgMin(dev_argmin_storage,argmin_storage_bytes,min_temp,d_min_kv,num_part2);
+				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_fbz,d_max_fbz0,num_part2);
+				cub::DeviceReduce::Max(dev_max_storage,max_storage_bytes,max_uz,d_max_uz0,num_part2);
 				cudaDeviceSynchronize();
 				cudaMemcpy(max_umag0,d_max_umag0,sizeof(Real),cudaMemcpyDeviceToHost);
 				cudaMemcpy(max_rho0,d_max_rho0,sizeof(Real),cudaMemcpyDeviceToHost);
 				cudaMemcpy(max_ftotal0,d_max_ftotal0,sizeof(Real),cudaMemcpyDeviceToHost);
+				cudaMemcpy(max_temp0,d_max_temp0,sizeof(Real),cudaMemcpyDeviceToHost);
+				cudaMemcpy(min_temp0,d_min_temp0,sizeof(Real),cudaMemcpyDeviceToHost);
+				cudaMemcpy(max_fbz0,d_max_fbz0,sizeof(Real),cudaMemcpyDeviceToHost);
+				cudaMemcpy(max_uz0,d_max_uz0,sizeof(Real),cudaMemcpyDeviceToHost);
 
 				end=clock();
 				cpu_time_used=((double)(end-start))/CLOCKS_PER_SEC;
 				printf("Simulation time: %5.2f sec\n", time);
 				printf("Computing time: %5.2f sec\n\n", cpu_time_used);
-				printf("%d\t tu_max=%5.2f\tftotal_max=%e\n\n",count,max_umag0[0],max_ftotal0[0]);
+				printf("%d\t tu_max=%5.2f\ttt_max=%5.2f\ttt_min=%5.2f\tfbz_max=%.3e\tuz_max=%5.2f\tftotal_max=%.3e\n\n",
+					count,max_umag0[0],max_temp0[0],min_temp0[0],max_fbz0[0],max_uz0[0],max_ftotal0[0]);
+
+				// Cold-spot diagnostic
+				cudaMemcpy(h_min_kv,d_min_kv,sizeof(cub::KeyValuePair<int,Real>),cudaMemcpyDeviceToHost);
+				int cold_idx=h_min_kv->key;
+				if(cold_idx>=0 && cold_idx<num_part2){
+					cudaMemcpy(&cold_p1,dev_P1+cold_idx,sizeof(part1),cudaMemcpyDeviceToHost);
+					printf("    [cold-spot] idx=%d  T=%6.3f  pos=(%7.2f,%7.2f,%7.2f)  p_type=%d  buffer_type=%d\n\n",
+						cold_idx,cold_p1.temp,cold_p1.x,cold_p1.y,cold_p1.z,(int)cold_p1.p_type,(int)cold_p1.buffer_type);
+				}
+
+				// Hot-u diagnostic: locate particle with max |u| magnitude (velocity-limit clipping)
+				cub::DeviceReduce::ArgMax(dev_argmax_storage,argmax_storage_bytes,max_umag,d_max_u_kv,num_part2);
+				cudaDeviceSynchronize();
+				cudaMemcpy(h_max_u_kv,d_max_u_kv,sizeof(cub::KeyValuePair<int,Real>),cudaMemcpyDeviceToHost);
+				int hot_idx=h_max_u_kv->key;
+				if(hot_idx>=0 && hot_idx<num_part2){
+					part1 hot_p1;
+					cudaMemcpy(&hot_p1,dev_P1+hot_idx,sizeof(part1),cudaMemcpyDeviceToHost);
+					Real umag_hot=sqrt(hot_p1.ux*hot_p1.ux+hot_p1.uy*hot_p1.uy+hot_p1.uz*hot_p1.uz);
+					printf("    [hot-u]     idx=%d  |u|=%6.3f  u=(%7.3f,%7.3f,%7.3f)  pos=(%7.2f,%7.2f,%7.2f)  p_type=%d  i_type=%d  buffer_type=%d\n",
+						hot_idx,umag_hot,hot_p1.ux,hot_p1.uy,hot_p1.uz,
+						hot_p1.x,hot_p1.y,hot_p1.z,(int)hot_p1.p_type,(int)hot_p1.i_type,(int)hot_p1.buffer_type);
+				}
+
+				// Domain-integrated diagnostics (fluid only): plateau → quasi-steady state
+				{
+					dim3 td,bd; td.x=128; bd.x=(num_part2-1)/td.x+1;
+					kernel_copy_diag_sum<<<bd,td>>>(dev_P1, diag_kt, diag_uu);
+					cudaDeviceSynchronize();
+					cub::DeviceReduce::Sum(dev_sum_storage, sum_storage_bytes, diag_kt, d_sum_kt, num_part2);
+					cub::DeviceReduce::Sum(dev_sum_storage, sum_storage_bytes, diag_uu, d_sum_uu, num_part2);
+					cudaMemcpy(&sum_kt0, d_sum_kt, sizeof(Real), cudaMemcpyDeviceToHost);
+					cudaMemcpy(&sum_uu0, d_sum_uu, sizeof(Real), cudaMemcpyDeviceToHost);
+					unsigned int h_ac=0;
+					cudaMemcpyFromSymbol(&h_ac, avg_count, sizeof(unsigned int));
+					printf("    [domain] Σk_turb=%.4e   Σ½|u|²=%.4e   avg_count=%u (AVG_START_TIME=%.2f)\n\n",
+						sum_kt0, sum_uu0, h_ac, (double)AVG_START_TIME);
+				}
 			}
 		}
 
@@ -722,6 +981,10 @@ void*ISPH_Calc(void*arg){
 	free(max_umag0);
 	free(max_rho0);
 	free(max_ftotal0);
+	free(max_temp0);
+	free(min_temp0);
+	free(max_fbz0);
+	free(max_uz0);
 	cudaFree(g_idx);
 	cudaFree(p_idx);
 	cudaFree(g_idx_in);
@@ -746,11 +1009,25 @@ void*ISPH_Calc(void*arg){
 	cudaFree(max_umag);
 	cudaFree(max_rho);
 	cudaFree(max_ft);
+	cudaFree(max_temp);
+	cudaFree(min_temp);
+	cudaFree(max_fbz);
+	cudaFree(max_uz);
 	cudaFree(d_max_umag0);
 	cudaFree(d_max_rho0);
 	cudaFree(d_max_ftotal0);
+	cudaFree(d_max_temp0);
+	cudaFree(d_min_temp0);
+	cudaFree(d_max_fbz0);
+	cudaFree(d_max_uz0);
 	cudaFree(dev_sort_storage);
 	cudaFree(dev_max_storage);
+	cudaFree(d_min_kv);
+	cudaFree(dev_argmin_storage);
+	free(h_min_kv);
+	cudaFree(d_max_u_kv);
+	cudaFree(dev_argmax_storage);
+	free(h_max_u_kv);
 	cudaStreamDestroy(str1[tid]);
 	cudaStreamDestroy(str2[tid]);
 	pthread_barrier_wait(&barrier);

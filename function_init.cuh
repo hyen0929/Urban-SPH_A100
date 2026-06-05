@@ -760,6 +760,9 @@ void read_input_LDM(L_part1*Pa1,char*INPUT)
 			case inp_m0:
 				Pa1[nop].m_ref=atof(buffer);
 				break;
+			case inp_temp:
+				// LDM particles don't use temperature; silently skip
+				break;
 			case inp_rho:
 				Pa1[nop].rho=atof(buffer);
 				//Pa2[nop].rho0=atof(buffer);

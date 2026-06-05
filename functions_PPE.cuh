@@ -1,4 +1,3 @@
-////////////////////////////////////////////////////////////////////////
 __global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
 {
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
@@ -6,6 +5,7 @@ __global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,par
 	if(P1[i].i_type>i_type_crt) return;
 	if(P1[i].p_type>=1000)	return;		// Immersed Boundary Method
 	if(P1[i].p_type<=0)	return;
+	if(P1[i].buffer_type==99)	return;	// Interior fluid (inside building) — skip PPE
 
 	int_t icell,jcell,kcell;
 	Real xi,yi,zi,uxi,uyi,uzi,rhoi,tempi;
@@ -78,7 +78,7 @@ __global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,par
 						mj=P1[j].m;
 						tempj=P1[j].temp;
 
-						if(P1[j].p_type<1000){
+						if(P1[j].p_type<1000 && P1[j].buffer_type!=99){
 							if(itype!=4){
 								xj=P1[j].x;
 								yj=P1[j].y;
@@ -215,7 +215,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	Real xi,yi,zi,uxi,uyi,uzi,kci,eta;
 	Real hi,mi,rhoi,tempi,visi,betai;
 	Real diffi,concni;
-	Real search_range,tmp_A,tmp_Rc,tmp_Rd,tmp_Rd2;
+	Real search_range,tmp_A,tmp_Rc,tmp_Rc_diff,tmp_Rd,tmp_Rd2;
 	Real tmpx,tmpy,tmpz;
 	Real eulerx, eulery, eulerz, eulert;
 	Real cpi;
@@ -274,6 +274,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 
 	tmpx=tmpy=tmpz=0.0;
 	tmp_Rc=0.0;
+	tmp_Rc_diff=0.0;
 	tmp_Rd=0.0;
 	tmp_Rd2=0.0;
 	eulerx=eulery=eulerz=eulert=0.0;
@@ -314,7 +315,16 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 						hj=P1[j].h;
 						ptypej=P1[j].p_type;
 
-						if(P1[j].p_type<1000){
+						// IBM walls treated as ADIABATIC (no fluid-IBM conduction).
+						// Reason: previous Dirichlet T=T_con on all IBM particles (incl. roof, top
+						// edges, side walls) injected unphysical heat at corners where the SPH
+						// operator has severe boundary truncation. Combined with Boussinesq
+						// buoyancy, this drove a ±60K checkerboard at the windward roof corner.
+						// Ground heat is already handled by MOST (KERNEL_MOST_boundary3D).
+						// If wall heat balance is needed later, implement PALM-style USM
+						// (radiation + sensible + wall conduction → θ* feedback).
+
+						if(P1[j].p_type<1000 && P1[j].buffer_type!=99){
 
 							tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 							search_range=k_search_kappa*fmax(hi,hj);	// search range for multi-resoltuion(KDH)
@@ -416,18 +426,28 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 									eulery += (uxi*(uyj-uyi)*tdwx+uyi*(uyj-uyi)*tdwy+uzi*(uyj-uyi)*tdwz)*mj/rhoj*(1-P1[i].eli);
 									eulerz += (uxi*(uzj-uzi)*tdwx+uyi*(uzj-uzi)*tdwy+uzi*(uzj-uzi)*tdwz)*mj/rhoj*(1-P1[i].eli);
 
-									if(k_con_solve){
-										//eulert -= (uxi*(tempj-tempi)*tdwx+uyi*(tempj-tempi)*tdwy+uzi*(tempj-tempi)*tdwz)*mj/rhoj*(1-P1[i].eli);
+									if(k_con_solve && ptypej<1000 && P1[j].buffer_type!=99){
+#if RIEMANN_EULERT
+										// Vila 1999 conservative Eulerian advection, 1st-order upwind (Godunov).
+										// eulert = u.gradT = sum 2mj/(rhoi+rhoj)(T*-Ti)(u*.dW)(1-eli),
+										//   u* = interface velocity = 0.5(ui+uj),
+										//   T* = upwind state: Tj if neighbour j is upwind (u*.dW<=0), else Ti.
+										// Monotone by construction -> suppresses corner temperature overshoot.
+										Real us_dw = 0.5*((uxi+uxj)*tdwx+(uyi+uyj)*tdwy+(uzi+uzj)*tdwz);
+										Real tstar = (us_dw<=0.0) ? tempj : tempi;
+										eulert += 2.0*mj/(rhoi+rhoj)*(tstar-tempi)*us_dw*(1-P1[i].eli);
+#else
 										eulert -= 2.0*mj/(rhoi+rhoj)*(tempj-tempi)*((uxi-uxj)*tdwx+(uyi-uyj)*tdwy+(uzi-uzj)*tdwz)*(1-P1[i].eli);
+#endif
 									}
 									if(k_concn_solve){
 										concnj=P1[j].concn;
 										tmp_Rd-= (uxi*(concnj-concni)*tdwx+uyi*(concnj-concni)*tdwy+uzi*(concnj-concni)*tdwz)*mj/rhoj*(1-P1[i].eli);
 									}
 								}
-								if(k_con_solve){
+								if(k_con_solve && P1[j].buffer_type!=99){
 									//kcj=conductivity(tempj, ptypej);
-									kcj=Solid_k*(ptypej==0||ptypej==1000)+Air_k*(ptypej==1||ptypej==-1);
+									kcj=Solid_k*(ptypej==0)+Air_k*(ptypej==1||ptypej==-1);  // IBM walls adiabatic (ptypej==1000 excluded)
 									Real rhoj_temp, mj_temp;
 									if(ptypej==1||ptypej==-1) rhoj_temp=rhoj;
 									else rhoj_temp=Solid_rho;
@@ -437,11 +457,24 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 									sum_con_H/=(tdist+1e-10)*rhoi*rhoj_temp*(kci+kcj);
 									tmp_Rc+=sum_con_H;
 								}
-								//if(k_turbulence_model==SPS){
-									// tmp_Rc+=0.5*mj*(P1[i].vis_t+P1[j].vis_t)/(rhoi*rhoj)*((uxi-uxj)*tdwx+(uyi-uyj)*tdwy+(uzi-uzj)*tdwz);
-									// Turb_dT+=0.5*mj*(P1[i].vis_t+P1[j].vis_t)/(rhoi*rhoj)*((uxi-uxj)*tdwx+(uyi-uyj)*tdwy+(uzi-uzj)*tdwz);
-									//tmp_Rc += mj/(rhoi*rhoj)*((P1[i].vis_t+P1[j].vis_t)/Pr_t)*(tempi-tempj)*tdwij/(tdist+1e-20);
-								//}
+								if(k_turbulence_model==DDF && P1[j].buffer_type!=99){
+									// SGS thermal diffusion (Brookshaw form, K/s units — does not divide by cp)
+									tmp_Rc_diff += mj/rhoj*((P1[i].vis_t+P1[j].vis_t)/Pr_t)*(tempi-tempj)*tdwij/(tdist+1e-20);
+								}
+								if(k_con_solve){
+									// Artificial thermal diffusion: damp temperature instability near building corners.
+									// For converging flow (uij.xij < 0): always apply (standard Monaghan AV).
+									// For diverging flow (uij.xij >= 0): also apply near IBM walls (flt_s < 0.7),
+									//   where separation-point positive feedback causes eulert runaway.
+									Real uij_xij_t=(uxi-uxj)*(xi-xj)+(uyi-uyj)*(yi-yj)+(uzi-uzj)*(zi-zj);
+									if(uij_xij_t<0 || P1[i].flt_s < 0.7f){
+										Real h_ij=(hi+hj)*0.5f;
+										Real u_sig=fabsf(uij_xij_t)/(tdist+1e-20f);
+										Real alpha_art=0.5f*h_ij*u_sig;  // m2/s, artificial thermal diffusivity
+										// Brookshaw form with factor 2 (single-particle alpha): K/s units
+										tmp_Rc_diff += 2.0f*mj/rhoj*alpha_art*(tempi-tempj)*tdwij/(tdist+1e-20f);
+									}
+								}
 								if(k_concn_solve){
 									concnj=P1[j].concn;
 									diffj=diffusion_coefficient(tempj,ptypej);
@@ -483,7 +516,7 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 	// z-directional gravitational force
 	Real fg=0.0;
 	if(k_fg_solve) tmpz+=-Gravitational_CONST;
-	if((k_boussinesq_solve)&&(ptypei>0)&&(ptypei<1000)) tmpz=betai*Gravitational_CONST*(tmp_temp/tmp_flt-tempb);
+	if((k_boussinesq_solve)&&(ptypei>0)&&(ptypei<1000)&&(tmp_flt>1e-6f)) tmpz+=betai*Gravitational_CONST*(tmp_temp/tmp_flt-tempb);
 
 	//P1[i].PPE1=betai*Gravitational_CONST*(tmp_temp/tmp_flt-tempb);
 	P3[i].ftotalx=tmpx-eulerx;
@@ -510,10 +543,9 @@ __global__ void KERNEL_advection_force3D(int_t inout,int_t*g_str,int_t*g_end,par
 		//if (enthalpy_eqn) P3[i].denthalpy=tmp_Rc*(ptypei!=-1);
 		if(enthalpy_eqn) P3[i].denthalpy=tmp_Rc*(ptypei!=-1);
 		else{
-			P3[i].dtemp+=tmp_Rc/cpi-eulert;
-			//P1[i].PPE1=Turb_dT;
-			//P1[i].PPE2=-eulert;
-			//if (tmp_Rc>1e-6) printf("dtemp=%f\n",P3[i].dtemp);
+			// tmp_Rc: conduction in W/kg form (Cleary harmonic, divided by cp -> K/s)
+			// tmp_Rc_diff: SGS + artificial diffusion in K/s (Brookshaw form, no cp division)
+			P3[i].dtemp+=tmp_Rc/cpi+tmp_Rc_diff-eulert;
 		}
 	}
 	// P3[i].fsx=tmpsx;
@@ -640,7 +672,7 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
 						tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
 						search_range=k_search_kappa*fmax(hi,hj);
 
-						if(P1[j].p_type<1000){
+						if(P1[j].p_type<1000 && P1[j].buffer_type!=99){
 							if(tdist<search_range){
 								Real tmp_tdwx,tmp_tdwy,tmp_tdwz,tdwx,tdwy,tdwz,mj,rhoj,pj;
 								int_t ptypej;

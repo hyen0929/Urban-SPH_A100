@@ -100,6 +100,10 @@ __host__ __device__ Real viscosity(Real temp,uint_t p_type)
 
 	p_type=abs(p_type);
 
+#if CASE_ID==1500
+	return 0.06125;  // channel validation: effective dynamic viscosity (nu=0.05, rho=1.225 -> Re_tau~800)
+#endif
+
 	if (k_prop_table)
 	{
 		index0=k_table_index[p_type];
@@ -121,6 +125,10 @@ __host__ __device__ Real viscosity(Real temp,uint_t p_type)
 __host__ __device__ Real viscosity2(Real temp,uint_t p_type)
 {
 	Real vis;
+
+#if CASE_ID==1500
+	return 0.06125;  // channel validation: effective dynamic viscosity (nu=0.05, rho=1.225 -> Re_tau~800)
+#endif
 
 	if(p_type==1) vis=1.8e-5;
 	else if(p_type==0) vis=1.0e-2;

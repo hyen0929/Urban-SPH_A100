@@ -110,8 +110,8 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 							tdwy=tmp_dwij*(yi-yj)/tdist;
 							tdwz=tmp_dwij*(zi-zj)/tdist;
 
-							// filter
-							if((tcount%k_freq_filt)==0) tmp_flt+=mj/rhoj*tmp_wij;
+							// filter (exclude interior fluid buffer_type==99 so flt_s reflects effective neighborhood near building corners)
+							if((tcount%k_freq_filt)==0 && P1[j].buffer_type!=99) tmp_flt+=mj/rhoj*tmp_wij;
 
 							// strain rate
 							if((k_fv_solve!=0)&&(k_turbulence_model!=Laminar))
@@ -169,7 +169,7 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 		// tmp_SR=sqrt(tmp_SR);
 		tmp_SR=2*(st11*st11+st22*st22+st33*st33+2*st12*st12+2*st31*st31+2*st23*st23);
 		tmp_SR=sqrt(tmp_SR);
-		P2[i].SR=tmp_SR;
+		P3[i].SR=tmp_SR;   // expose |S| for k-eps kernel
 
    		tmp_sigma=0.3333*tmp_sigma;
     	tmp_sigma=sqrt(tmp_sigma);
@@ -182,14 +182,13 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 			tvis_t=Cs_sgs*Cs_sgs*tmp_cl*tmp_cl*tmp_SR;
 			if(P1[i].buffer_type!=1)P1[i].vis_t=tvis_t;
 		}
-    	else if(k_turbulence_model==DDF){
+    	else if(k_turbulence_model==DDF){        // Deardorff one-equation model
       		Real p = nui*tmp_SR*tmp_SR;
-      		Real b = 0.0;
-      		// Real b = -(Gravitational_CONST/Theta0_ref)*(akti)*dTdz;
+      		Real b = -(Gravitational_CONST/tempb)*(akti)*dTdz;
       		Real eps = Ce_sgs*ki*sqrt(ki)/tmp_cl;
       		Real dk = p + b - eps + Tk;
       		ki += dk*tdt;
-      		ki=max(ki,1e-4);    // Clipping for negative TKE
+      		ki=max(1e-4f, min(ki, 5.0f));     // Clamp TKE: min avoids negative, max prevents buoyancy runaway (5 m2/s2 ~ realistic ABL near buildings)
       		tvis_t = Ck_sgs*tmp_cl*sqrt(ki);
       		if(isnan(tvis_t)) printf("p=%f eps=%f dk=%f ki=%f tmp_cl=%f\n",p,eps,dk,ki,tmp_cl);
 
@@ -428,6 +427,30 @@ __global__ void KERNEL_clc_color_field3D(int_t*g_str,int_t*g_end,part1*P1,part3*
 	P3[i].cc=tmpn/tmpd;
 }
 
+// Compute IBM outward normal using center-of-mass (CM) of all IBM particles.
+// For convex buildings: outward normal = (xi - CM) / |xi - CM|.
+// Immune to interior fluid corruption (uses only IBM geometry, not fluid positions).
+__global__ void KERNEL_clc_IB_normal_from_CM3D(part1* P1, part3* P3, Real cm_x, Real cm_y, Real cm_z)
+{
+    int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i >= k_num_part2) return;
+    if (P1[i].p_type < 1000) return;
+
+    Real dx = P1[i].x - cm_x;
+    Real dy = P1[i].y - cm_y;
+    Real dz = P1[i].z - cm_z;
+    Real mag = sqrt(dx*dx + dy*dy + dz*dz);
+    if (mag > 1e-9f) {
+        P3[i].nx = dx / mag;
+        P3[i].ny = dy / mag;
+        P3[i].nz = dz / mag;
+    } else {
+        P3[i].nx = 0.0f;
+        P3[i].ny = 0.0f;
+        P3[i].nz = 0.0f;
+    }
+}
+
 __global__ void KERNEL_clc_IB_normal_vector3D(int_t* g_str, int_t* g_end, part1* P1, part3* P3)
 {
     int_t i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -500,18 +523,35 @@ __global__ void KERNEL_clc_IB_normal_vector3D(int_t* g_str, int_t* g_end, part1*
     }
 }
 
-// Detect fluid particles inside buildings using IBM normal dot product
-// Run once at count==0 after KERNEL_clc_IB_normal_vector3D
-__global__ void KERNEL_detect_interior_fluid3D(int_t* g_str, int_t* g_end, part1* P1, part3* P3)
+// ─── Interior particle detection: exterior BFS approach ────────────────────────
+// P3.nx is repurposed as exterior flag for fluid particles (p_type==1):
+//   0.0 = undecided, 1.0 = exterior confirmed
+// IBM particles (p_type>=1000) keep their outward normals in P3.nx/ny/nz.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Step 1: seed exterior from open-boundary buffer zones (buffer_type 1-5)
+__global__ void KERNEL_seed_exterior_fluid3D(part1* P1, part3* P3)
 {
     int_t i = threadIdx.x + blockIdx.x * blockDim.x;
     if (i >= k_num_part2) return;
     if (P1[i].p_type != 1) return;
+    if (P1[i].buffer_type >= 1 && P1[i].buffer_type <= 5)
+        P3[i].nx = 1.0f;
+}
+
+// Step 2: propagate exterior marking one wave per call.
+// IBM wall check uses weighted dot-product (robust at building corners).
+// Race conditions in GPU cause faster exterior propagation — this is fine,
+// because IBM wall check still correctly blocks interior-side particles.
+__global__ void KERNEL_propagate_exterior_fluid3D(int_t* g_str, int_t* g_end, part1* P1, part3* P3)
+{
+    int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i >= k_num_part2) return;
+    if (P1[i].p_type != 1) return;
+    if (P3[i].nx > 0.5f) return;  // already exterior confirmed
 
     int_t icell, jcell, kcell;
-    Real xi = P1[i].x;
-    Real yi = P1[i].y;
-    Real zi = P1[i].z;
+    Real xi = P1[i].x, yi = P1[i].y, zi = P1[i].z;
     Real hi = P1[i].h;
     Real tmp_A = calc_tmpA(hi);
     Real search_range = k_search_kappa * hi;
@@ -524,47 +564,67 @@ __global__ void KERNEL_detect_interior_fluid3D(int_t* g_str, int_t* g_end, part1
     else { kcell = min(floor((zi - k_z_min) / k_dcell), k_NK - 1); }
     if (icell < 0) icell = 0; if (jcell < 0) jcell = 0; if (kcell < 0) kcell = 0;
 
-    Real sum_sign = 0.0;
-    Real sum_w = 0.0;
     int_t ncell = P1[i].ncell;
 
+    // Pass 1: IBM wall check — weighted dot-product with nearby IBM normals
+    // If sum_d/sum_w < 0, particle i is on the interior side → block exterior mark
+    Real sum_d = 0.0f, sum_w_ibm = 0.0f;
     for (int_t z = -ncell; z <= ncell; z++) {
         for (int_t y = -ncell; y <= ncell; y++) {
             for (int_t x = -ncell; x <= ncell; x++) {
-                int_t k = idx_cell(icell + x, jcell + y, kcell + z);
                 if (((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
-                if (g_str[k] != cu_memset) {
-                    int_t fend = g_end[k];
-                    for (int_t j = g_str[k]; j < fend; j++) {
-                        if (P1[j].p_type >= 1000) {
-                            Real nxj = P3[j].nx;
-                            Real nyj = P3[j].ny;
-                            Real nzj = P3[j].nz;
-                            Real nmag = sqrt(nxj*nxj + nyj*nyj + nzj*nzj);
-                            if (nmag < 0.5) continue;
+                int_t k = idx_cell(icell + x, jcell + y, kcell + z);
+                if (g_str[k] == cu_memset) continue;
+                int_t fend = g_end[k];
+                for (int_t j = g_str[k]; j < fend; j++) {
+                    if (P1[j].p_type >= 1000) {
+                        Real nxj = P3[j].nx, nyj = P3[j].ny, nzj = P3[j].nz;
+                        if (nxj*nxj + nyj*nyj + nzj*nzj < 0.25f) continue;
+                        Real xj = P1[j].x, yj = P1[j].y, zj = P1[j].z;
+                        Real tdist = sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
+                        if (tdist < 1e-9f || tdist >= search_range) continue;
+                        Real twij = calc_kernel_wij(tmp_A, hi, tdist);
+                        Real d = (xi-xj)*nxj + (yi-yj)*nyj + (zi-zj)*nzj;
+                        sum_d += d * twij;
+                        sum_w_ibm += twij;
+                    }
+                }
+            }
+        }
+    }
+    if (sum_w_ibm > 1e-10f && sum_d / sum_w_ibm < 0.0f) return;  // interior side → block
 
-                            Real xj = P1[j].x;
-                            Real yj = P1[j].y;
-                            Real zj = P1[j].z;
-                            Real tdist = sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
-                            if (tdist > 1e-9 && tdist < search_range) {
-                                Real twij = calc_kernel_wij(tmp_A, hi, tdist);
-                                // dot(x_fluid - x_IBM, n_IBM): positive=outside, negative=inside
-                                Real d = (xi-xj)*nxj + (yi-yj)*nyj + (zi-zj)*nzj;
-                                sum_sign += d * twij;
-                                sum_w += twij;
-                            }
+    // Pass 2: propagate from exterior-confirmed fluid neighbor
+    for (int_t z = -ncell; z <= ncell; z++) {
+        for (int_t y = -ncell; y <= ncell; y++) {
+            for (int_t x = -ncell; x <= ncell; x++) {
+                if (((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+                int_t k = idx_cell(icell + x, jcell + y, kcell + z);
+                if (g_str[k] == cu_memset) continue;
+                int_t fend = g_end[k];
+                for (int_t j = g_str[k]; j < fend; j++) {
+                    if (P1[j].p_type == 1 && P3[j].nx > 0.5f) {
+                        Real xj = P1[j].x, yj = P1[j].y, zj = P1[j].z;
+                        Real tdist = sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
+                        if (tdist < search_range) {
+                            P3[i].nx = 1.0f;
+                            return;
                         }
                     }
                 }
             }
         }
     }
-
-    if (sum_w > 1e-10 && sum_sign / sum_w < 0.0) {
-        P1[i].ux = 0.0;
-        P1[i].uy = 0.0;
-        P1[i].uz = 0.0;
-        P1[i].MOST_buffer = 99;  // flag as interior
-    }
 }
+
+// Step 3: mark all fluid particles not exterior-confirmed as interior (buffer_type=99)
+__global__ void KERNEL_mark_interior_fluid3D(part1* P1, part3* P3)
+{
+    int_t i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i >= k_num_part2) return;
+    if (P1[i].p_type != 1) return;
+    if (P1[i].buffer_type >= 1 && P1[i].buffer_type <= 5) return;
+    if (P3[i].nx < 0.5f)
+        P1[i].buffer_type = 99;
+}
+

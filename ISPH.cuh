@@ -75,6 +75,16 @@ void ISPH(int_t*vii,Real*vif)
 	read_input(HP1,INPUT_FILE_NAME);
 	read_input_LDM(HLP1,INPUT_FILE_NAME2);
 
+	// LDM t_release normalize: shift so min(t_release) = 0.
+	// Then release timing in functions_LDM.cuh uses (time - AVG_START_TIME) >= t_release.
+	// → LDM 시작은 AVG_START_TIME, 입력 파일 t_release 분포는 그대로 유지.
+	if(num_part_LDM > 0){
+		Real t_rel_min = HLP1[0].t_release;
+		for(int_t k=1; k<num_part_LDM; k++) if(HLP1[k].t_release < t_rel_min) t_rel_min = HLP1[k].t_release;
+		for(int_t k=0; k<num_part_LDM; k++) HLP1[k].t_release -= t_rel_min;
+		printf("[LDM] t_release normalized: subtracted %g sec (orig min)\n", t_rel_min);
+	}
+
 	//-------------------------------------------------------------------------------------------------
 	// 셀 (Cell) 및 검색 범위 설정
 	//-------------------------------------------------------------------------------------------------
