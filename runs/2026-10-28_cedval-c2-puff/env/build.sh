@@ -1,0 +1,5 @@
+#!/bin/bash
+# 2026-10-28_cedval-c2-puff 재현 빌드
+set -e
+cd "$(dirname "$0")/../../.."
+nvcc -w -use_fast_math -arch=sm_80 -O3 -expt-relaxed-constexpr -I./cub-1.8.0/ -DCASE_ID=1020 -DDEACTIVATE_IBM=0 -DMOST_boundary=1 -DL_MOST_z_lo=0.0 -DL_MOST_z_hi=2.5 -DABL_h=1.0e9 -DSPONGE_GAMMA_MAX=0.2 -DSPONGE_Z_BOTTOM=150.0 -DSPONGE_DAMP_UY=1 -DINIT_CROSSFLOW_UY=0.0 -DDD_DISABLE=1 -DABL_ALPHA=0.27 -DAVG_START_TIME=200.0 -DAVG_END_TIME=999.0 -DCKPT_EVERY=5000 -DLDM_DUMP_EVERY=100 -DSLICE_DUMP_EVERY=500 -DFULL_DUMP_EVERY=50000 -DVORT_DUMP_EVERY=10000 -DINPUT_CASE_NAME=\"CEDVAL_C2\" -DOUTPUT_CASE_NAME=\"runs/2026-10-28_cedval-c2-puff/out\"  SOPHIA_gpu.cu -o runs/2026-10-28_cedval-c2-puff/env/SOPHIA_gpu -lpthread

@@ -1,0 +1,2274 @@
+diff --git a/ISPH.cuh b/ISPH.cuh
+index 5f74d78..1afe5c4 100644
+--- a/ISPH.cuh
++++ b/ISPH.cuh
+@@ -75,15 +75,8 @@ void ISPH(int_t*vii,Real*vif)
+ 	read_input(HP1,INPUT_FILE_NAME);
+ 	read_input_LDM(HLP1,INPUT_FILE_NAME2);
+ 
+-	// LDM t_release normalize: shift so min(t_release) = 0.
+-	// Then release timing in functions_LDM.cuh uses (time - AVG_START_TIME) >= t_release.
+-	// → LDM 시작은 AVG_START_TIME, 입력 파일 t_release 분포는 그대로 유지.
+-	if(num_part_LDM > 0){
+-		Real t_rel_min = HLP1[0].t_release;
+-		for(int_t k=1; k<num_part_LDM; k++) if(HLP1[k].t_release < t_rel_min) t_rel_min = HLP1[k].t_release;
+-		for(int_t k=0; k<num_part_LDM; k++) HLP1[k].t_release -= t_rel_min;
+-		printf("[LDM] t_release normalized: subtracted %g sec (orig min)\n", t_rel_min);
+-	}
++	// t_release used as-is (absolute sim time). Release in functions_LDM.cuh
++	// uses ttime >= t_release directly — no normalization/shift.
+ 
+ 	//-------------------------------------------------------------------------------------------------
+ 	// 셀 (Cell) 및 검색 범위 설정
+diff --git a/ISPH_Calc.cuh b/ISPH_Calc.cuh
+index 93ec66e..fc4a8b7 100644
+--- a/ISPH_Calc.cuh
++++ b/ISPH_Calc.cuh
+@@ -16,6 +16,240 @@ static size_t g_resid_storage_bytes = 0;
+ static FILE*  g_fp_ppe_log        = NULL;   // ./<CASE_NAME>/PPE_iter_log.txt
+ #endif
+ 
++// Mean-field one-shot dump guard (Run A). Set true after the snapshot is
++// written at time >= AVG_END_TIME so later timesteps don't overwrite it.
++static bool g_mean_field_dumped = false;
++
++// Host shadows of the device __device__ symbols avg_start_dyn / avg_end_dyn.
++// tid==0 owns writes; updates are mirrored to device via cudaMemcpyToSymbol
++// and read by other tids after pthread_barrier_wait.
++static volatile Real h_avg_start = (Real)1e30;
++static volatile Real h_avg_end   = (Real)1e30;
++
++// Quasi-steady detection ring buffer (Σ½|u|² history, owned by tid==0).
++static Real g_qs_uu_buf[QS_DETECT_N];
++static int  g_qs_uu_fill = 0;
++static int  g_qs_uu_head = 0;
++
++// count value at the moment h_avg_start was latched. -1 = not yet.
++// Used to derive count_eff = count - count_avg so that output cadence
++// (freq_output, LDM 100-step) can be reset relative to the averaging start.
++static int_t count_avg = -1;
++
++#if PPE_DIAG
++// PPE residual diagnostic state (Parameters.cuh PPE_DIAG). Lazily allocated by
++// tid==0 on the first logged step; device-0 arrays + CSV owned by tid==0.
++static Real*  g_diag_bi            = NULL;   // per-particle |rho*div(u*)/dt|
++static Real*  g_diag_resid         = NULL;   // per-particle |A*p - b|
++static Real*  g_d_diag_bi_max      = NULL;   // device scalar: max|bi|
++static Real*  g_d_diag_resid_max   = NULL;   // device scalar: max|A*p - b|
++static Real*  g_d_diag_sum         = NULL;   // device scalar: Sum (for div(u^{n+1}) average)
++static void*  g_diag_storage       = NULL;   // CUB temp storage (sized for Max & Sum)
++static size_t g_diag_storage_bytes = 0;
++static int_t  g_n_fluid            = -1;     // cached fluid-particle count (for averages)
++static FILE*  g_fp_diag            = NULL;   // ./<OUTPUT_CASE_NAME>/PPE_diag_{explicit,implicit}.csv
++#endif
++
++#if CONSISTENT_PPE
++// IISPH solver state (Parameters.cuh CONSISTENT_PPE). Single-GPU (file-scope static).
++static Real*  g_iisph_resid        = NULL;   // per-particle |s_i - Ap_i| (density residual)
++static Real*  g_iisph_d_sum        = NULL;   // device scalar: sum of residual
++static void*  g_iisph_storage      = NULL;   // CUB Sum temp storage
++static size_t g_iisph_storage_bytes= 0;
++static FILE*  g_fp_iisph           = NULL;   // ./<OUTPUT_CASE_NAME>/IISPH_log.txt
++static FILE*  g_fp_conv            = NULL;   // ./<OUTPUT_CASE_NAME>/IISPH_conv.txt (per-step iter curve)
++#endif
++
++// true when this process resumed from a checkpoint: per-step logs are opened
++// in append mode so the pre-crash rows are kept (header only if the file is new).
++static bool g_restarted = false;
++static bool ckpt_log_is_new(FILE*fp){ fseek(fp, 0, SEEK_END); return ftell(fp)==0; }
++
++//-------------------------------------------------------------------------------------------------
++// Checkpoint / restart (Parameters.cuh CKPT_EVERY, CKPT_PATH; resume with env SOPHIA_RESTART=<path>)
++//
++// Everything carried across steps (single GPU):
++//   dev_P1, dev_P2               particle state (P3/SP1/SP2 are rebuilt at every step start)
++//   g_str/g_end                  fluid cell lists — built ONCE at count==0 and never again
++//   dev_LP1, dev_LP2             LDM particles (incl. per-particle RNG seed)
++//   g_str_LDM/g_end_LDM          LDM cell lists (rebuilt every freq_LDM steps; saved anyway)
++//   device globals               us_update, OB_length_global, avg_count, avg_start_dyn, avg_end_dyn
++//   host statics                 time, count, h_avg_start/end, count_avg, g_mean_field_dumped, QS buffer
++// File: [ckpt_header][P1][P2][g_str][g_end][LP1][LP2][g_str_LDM][g_end_LDM][qs_buf][end magic]
++// Written to <path>.tmp, fsync'd, previous file kept as <path>.prev, then renamed into place.
++//-------------------------------------------------------------------------------------------------
++#include <unistd.h>
++
++typedef struct ckpt_header {
++	char         magic[16];            // "SOPHIA_CKPT_v1"
++	int          sz_part1, sz_part2, sz_lpart1, sz_lpart2;
++	int          n_part2, n_part_LDM, n_cells, qs_n;
++	int          step;                 // count after the saved step (next step to run)
++	Real         sim_time, step_dt;
++	float        us_update, OB_length_global;
++	unsigned int avg_count;
++	Real         avg_start_dyn, avg_end_dyn;
++	Real         h_avg_start, h_avg_end;
++	int          count_avg;
++	int          mean_field_dumped;
++	int          qs_fill, qs_head;
++	int          pad[8];
++} ckpt_header;
++
++static const char CKPT_MAGIC[16]     = "SOPHIA_CKPT_v1";
++static const char CKPT_END_MAGIC[16] = "SOPHIA_CKPT_END";
++
++static bool ckpt_write(FILE*fp, const void*buf, size_t n){ return fwrite(buf,1,n,fp)==n; }
++static bool ckpt_read (FILE*fp,       void*buf, size_t n){ return fread (buf,1,n,fp)==n; }
++
++// Host buffers file_P1/file_P2/file_LP1/file_LP2 are reused as staging (outputs recopy before use).
++static bool save_checkpoint(const char*path,
++	part1*dev_P1, part2*dev_P2, int_t*g_str, int_t*g_end,
++	L_part1*dev_LP1, L_part2*dev_LP2, int_t*g_str_LDM, int_t*g_end_LDM,
++	part1*file_P1, part2*file_P2, L_part1*file_LP1, L_part2*file_LP2)
++{
++	struct timespec t0, t1;
++	clock_gettime(CLOCK_MONOTONIC, &t0);
++
++	size_t n_cell_bytes = sizeof(int_t)*num_cells;
++	int_t*h_gs  =(int_t*)malloc(n_cell_bytes), *h_ge  =(int_t*)malloc(n_cell_bytes);
++	int_t*h_gsL =(int_t*)malloc(n_cell_bytes), *h_geL =(int_t*)malloc(n_cell_bytes);
++
++	cudaMemcpy(file_P1,  dev_P1,  sizeof(part1)*num_part2,      cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_P2,  dev_P2,  sizeof(part2)*num_part2,      cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_LP1, dev_LP1, sizeof(L_part1)*num_part_LDM, cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_LP2, dev_LP2, sizeof(L_part2)*num_part_LDM, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_gs,  g_str,     n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_ge,  g_end,     n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_gsL, g_str_LDM, n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_geL, g_end_LDM, n_cell_bytes, cudaMemcpyDeviceToHost);
++
++	ckpt_header hdr;
++	memset(&hdr, 0, sizeof(hdr));
++	memcpy(hdr.magic, CKPT_MAGIC, sizeof(CKPT_MAGIC));
++	hdr.sz_part1 = sizeof(part1);   hdr.sz_part2  = sizeof(part2);
++	hdr.sz_lpart1= sizeof(L_part1); hdr.sz_lpart2 = sizeof(L_part2);
++	hdr.n_part2  = num_part2; hdr.n_part_LDM = num_part_LDM; hdr.n_cells = num_cells; hdr.qs_n = QS_DETECT_N;
++	hdr.step     = count; hdr.sim_time = time; hdr.step_dt = dt;
++	cudaMemcpyFromSymbol(&hdr.us_update,        us_update,        sizeof(float));
++	cudaMemcpyFromSymbol(&hdr.OB_length_global, OB_length_global, sizeof(float));
++	cudaMemcpyFromSymbol(&hdr.avg_count,        avg_count,        sizeof(unsigned int));
++	cudaMemcpyFromSymbol(&hdr.avg_start_dyn,    avg_start_dyn,    sizeof(Real));
++	cudaMemcpyFromSymbol(&hdr.avg_end_dyn,      avg_end_dyn,      sizeof(Real));
++	hdr.h_avg_start = h_avg_start; hdr.h_avg_end = h_avg_end;
++	hdr.count_avg = count_avg; hdr.mean_field_dumped = g_mean_field_dumped ? 1 : 0;
++	hdr.qs_fill = g_qs_uu_fill; hdr.qs_head = g_qs_uu_head;
++
++	char tmp[512], prev[512];
++	snprintf(tmp,  sizeof(tmp),  "%s.tmp",  path);
++	snprintf(prev, sizeof(prev), "%s.prev", path);
++
++	bool ok = false;
++	FILE*fp = fopen(tmp, "wb");
++	if(fp){
++		ok = ckpt_write(fp, &hdr, sizeof(hdr))
++		  && ckpt_write(fp, file_P1,  sizeof(part1)*num_part2)
++		  && ckpt_write(fp, file_P2,  sizeof(part2)*num_part2)
++		  && ckpt_write(fp, h_gs,  n_cell_bytes) && ckpt_write(fp, h_ge,  n_cell_bytes)
++		  && ckpt_write(fp, file_LP1, sizeof(L_part1)*num_part_LDM)
++		  && ckpt_write(fp, file_LP2, sizeof(L_part2)*num_part_LDM)
++		  && ckpt_write(fp, h_gsL, n_cell_bytes) && ckpt_write(fp, h_geL, n_cell_bytes)
++		  && ckpt_write(fp, g_qs_uu_buf, sizeof(Real)*QS_DETECT_N)
++		  && ckpt_write(fp, CKPT_END_MAGIC, sizeof(CKPT_END_MAGIC));
++		ok = (fflush(fp)==0) && ok;
++		ok = (fsync(fileno(fp))==0) && ok;
++		ok = (fclose(fp)==0) && ok;
++	}
++	free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++
++	if(ok){
++		rename(path, prev);              // keep one previous generation (fails harmlessly on the first save)
++		ok = (rename(tmp, path)==0);
++	}
++	clock_gettime(CLOCK_MONOTONIC, &t1);
++	double wall = (t1.tv_sec-t0.tv_sec) + 1e-9*(t1.tv_nsec-t0.tv_nsec);
++	if(ok) printf("[ckpt] saved count=%d t=%.4f avg_count=%u -> %s (%.1f s)\n",
++	              (int)count, (double)time, hdr.avg_count, path, wall);
++	else   printf("[ckpt] ERROR: checkpoint write failed (%s); previous checkpoint left untouched\n", tmp);
++	fflush(stdout);
++	return ok;
++}
++
++// Called after device arrays are allocated/initialised and the averaging window is set,
++// right before the main loop. Overwrites the initial state; returns false on any mismatch.
++static bool load_checkpoint(const char*path,
++	part1*dev_P1, part2*dev_P2, int_t*g_str, int_t*g_end,
++	L_part1*dev_LP1, L_part2*dev_LP2, int_t*g_str_LDM, int_t*g_end_LDM,
++	part1*file_P1, part2*file_P2, L_part1*file_LP1, L_part2*file_LP2)
++{
++	FILE*fp = fopen(path, "rb");
++	if(!fp){ printf("[ckpt] FATAL: cannot open %s\n", path); return false; }
++
++	ckpt_header hdr;
++	if(!ckpt_read(fp, &hdr, sizeof(hdr)) || memcmp(hdr.magic, CKPT_MAGIC, sizeof(CKPT_MAGIC))!=0){
++		printf("[ckpt] FATAL: %s is not a SOPHIA checkpoint\n", path); fclose(fp); return false;
++	}
++	if(hdr.sz_part1!=(int)sizeof(part1) || hdr.sz_part2!=(int)sizeof(part2) ||
++	   hdr.sz_lpart1!=(int)sizeof(L_part1) || hdr.sz_lpart2!=(int)sizeof(L_part2) ||
++	   hdr.n_part2!=num_part2 || hdr.n_part_LDM!=num_part_LDM || hdr.n_cells!=num_cells ||
++	   hdr.qs_n!=QS_DETECT_N || hdr.step_dt!=dt){
++		printf("[ckpt] FATAL: checkpoint does not match this build/input "
++		       "(part1 %d/%d part2 %d/%d L_part1 %d/%d L_part2 %d/%d n_part2 %d/%d n_LDM %d/%d cells %d/%d qs %d/%d dt %g/%g)\n",
++		       hdr.sz_part1,(int)sizeof(part1), hdr.sz_part2,(int)sizeof(part2),
++		       hdr.sz_lpart1,(int)sizeof(L_part1), hdr.sz_lpart2,(int)sizeof(L_part2),
++		       hdr.n_part2,(int)num_part2, hdr.n_part_LDM,(int)num_part_LDM, hdr.n_cells,(int)num_cells,
++		       hdr.qs_n,(int)QS_DETECT_N, (double)hdr.step_dt,(double)dt);
++		fclose(fp); return false;
++	}
++
++	size_t n_cell_bytes = sizeof(int_t)*num_cells;
++	int_t*h_gs  =(int_t*)malloc(n_cell_bytes), *h_ge  =(int_t*)malloc(n_cell_bytes);
++	int_t*h_gsL =(int_t*)malloc(n_cell_bytes), *h_geL =(int_t*)malloc(n_cell_bytes);
++	char end_magic[16];
++	bool ok = ckpt_read(fp, file_P1,  sizeof(part1)*num_part2)
++	       && ckpt_read(fp, file_P2,  sizeof(part2)*num_part2)
++	       && ckpt_read(fp, h_gs,  n_cell_bytes) && ckpt_read(fp, h_ge,  n_cell_bytes)
++	       && ckpt_read(fp, file_LP1, sizeof(L_part1)*num_part_LDM)
++	       && ckpt_read(fp, file_LP2, sizeof(L_part2)*num_part_LDM)
++	       && ckpt_read(fp, h_gsL, n_cell_bytes) && ckpt_read(fp, h_geL, n_cell_bytes)
++	       && ckpt_read(fp, g_qs_uu_buf, sizeof(Real)*QS_DETECT_N)
++	       && ckpt_read(fp, end_magic, sizeof(end_magic))
++	       && memcmp(end_magic, CKPT_END_MAGIC, sizeof(CKPT_END_MAGIC))==0;
++	fclose(fp);
++	if(!ok){
++		printf("[ckpt] FATAL: %s is truncated or corrupt\n", path);
++		free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++		return false;
++	}
++
++	cudaMemcpy(dev_P1,  file_P1,  sizeof(part1)*num_part2,      cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_P2,  file_P2,  sizeof(part2)*num_part2,      cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_LP1, file_LP1, sizeof(L_part1)*num_part_LDM, cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_LP2, file_LP2, sizeof(L_part2)*num_part_LDM, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_str,     h_gs,  n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_end,     h_ge,  n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_str_LDM, h_gsL, n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_end_LDM, h_geL, n_cell_bytes, cudaMemcpyHostToDevice);
++	free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++
++	cudaMemcpyToSymbol(us_update,        &hdr.us_update,        sizeof(float));
++	cudaMemcpyToSymbol(OB_length_global, &hdr.OB_length_global, sizeof(float));
++	cudaMemcpyToSymbol(avg_count,        &hdr.avg_count,        sizeof(unsigned int));
++	cudaMemcpyToSymbol(avg_start_dyn,    &hdr.avg_start_dyn,    sizeof(Real));
++	cudaMemcpyToSymbol(avg_end_dyn,      &hdr.avg_end_dyn,      sizeof(Real));
++	time = hdr.sim_time; count = hdr.step;
++	h_avg_start = hdr.h_avg_start; h_avg_end = hdr.h_avg_end;
++	count_avg = hdr.count_avg; g_mean_field_dumped = (hdr.mean_field_dumped!=0);
++	g_qs_uu_fill = hdr.qs_fill; g_qs_uu_head = hdr.qs_head;
++	g_restarted = true;
++
++	printf("[ckpt] RESTART from %s: count=%d t=%.4f avg_count=%u h_avg=[%.3f, %.3f) count_avg=%d mean_dumped=%d\n",
++	       path, (int)count, (double)time, hdr.avg_count, (double)h_avg_start, (double)h_avg_end,
++	       (int)count_avg, hdr.mean_field_dumped);
++	fflush(stdout);
++	return true;
++}
++
+ //-------------------------------------------------------------------------------------------------
+ // 모든 입자 계산을 수행하는 주함수 + LDM
+ //-------------------------------------------------------------------------------------------------
+@@ -72,7 +306,21 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 		// 완화거리 가변 모델 사용
+ 		// if(dim==3) KERNEL_variable_smoothing_length3D<<<b,t>>>(g_str,g_end,dev_SP1);
+ 		// cudaDeviceSynchronize();
+-	
++
++#if LDM_MEAN_MODE
++		// Run B: load mean field AFTER the first NNPS sort so the record
++		// index in mean_field.bin (saved in Run A's sorted order) matches
++		// the current sorted dev_P1 indexing. Also keep dev_SP1 in sync.
++		{
++			int ok = load_mean_field(dev_P1, num_part2, MEAN_FIELD_PATH);
++			if(!ok){
++				printf("[mean] FATAL: load_mean_field failed (tid=%d). Aborting.\n", tid);
++			}
++			cudaMemcpy(dev_SP1, dev_P1, sizeof(part1)*num_part2, cudaMemcpyDeviceToDevice);
++		}
++		pthread_barrier_wait(&barrier);
++#endif
++
+ 	}
+ 	else{
+ 		// 0스텝 이후 단순 복사 >> 입자정보를 SP1, SP2 에 복사
+@@ -87,8 +335,9 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 	}
+ 
+ 	// LDM 주변입자 검색 (농도 계산)
+-	// Gate: LDM dormant until time >= AVG_START_TIME (release / advection / NNPS all skipped)
+-	if(time >= (Real)AVG_START_TIME){
++	// Gate: LDM dormant until quasi-steady reached (h_avg_start latched).
++	// release / advection / NNPS all skipped while h_avg_start == ∞.
++	if(time >= h_avg_start){
+ 	if(count%freq_LDM==0){
+ 
+ 		b.x=(num_part_LDM-1)/t.x+1;
+@@ -122,12 +371,12 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 		cudaMemcpy(dev_SLP2,dev_LP2,sizeof(L_part2)*num_part_LDM,cudaMemcpyDeviceToDevice);
+ 		pthread_barrier_wait(&barrier);
+ 	}
+-	}  // end of AVG_START_TIME gate (LDM NNPS block)
++	}  // end of h_avg_start gate (LDM NNPS block)
+ 
+ //-------------------------------------------------------------------------------------------------
+ // 계산 준비: gradient correction, filter, reference density, p_type switch, penetration, density gradient
+ //-------------------------------------------------------------------------------------------------
+-	
++#if !LDM_MEAN_MODE
+ 	b.x=(num_part2-1)/t.x+1;
+ 	// 미분보정필터 계산 >> 진우 코드랑 비교 필요
+ 	gradient_correction(g_str,g_end,dev_SP1,dev_P3);
+@@ -214,127 +463,195 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ //-------------------------------------------------------------------------------------------------
+ 	//For initial condition(Neumann boundary)
+ 
+-// #if IMPLICIT_PPE
+-// 	//--- Implicit Jacobi PPE: iterate up to maxIteration, early-exit on max|delta p| < tol ---
+-// 	// Tracks 3 metrics per step:
+-// 	//   - Jacobi delta:    max|p^{k+1} - p^k|  (iteration convergence indicator, early-exit gate)
+-// 	//   - max|bi|:         max|rho*div(u*)/dt| (input incompressibility error from predictor)
+-// 	//   - max|A*p - b|:    true PPE residual   (proportional to |div(u^{n+1})|, the real metric)
+-// 	b.x=(num_part2-1)/t.x+1;
+-
+-// 	// Lazy init (once, on first SOPHIA_single_ISPH call)
+-// 	if(g_dev_pres_old==NULL){
+-// 		cudaMalloc((void**)&g_dev_pres_old,    sizeof(Real)*num_part2);
+-// 		cudaMalloc((void**)&g_dev_pres_delta,  sizeof(Real)*num_part2);
+-// 		cudaMalloc((void**)&g_dev_bi,          sizeof(Real)*num_part2);
+-// 		cudaMalloc((void**)&g_dev_ppe_resid,   sizeof(Real)*num_part2);
+-// 		cudaMalloc((void**)&g_d_pres_delta_max,sizeof(Real));
+-// 		cudaMalloc((void**)&g_d_bi_max,        sizeof(Real));
+-// 		cudaMalloc((void**)&g_d_resid_max,     sizeof(Real));
+-// 		cudaMemset(g_dev_pres_old,   0, sizeof(Real)*num_part2);
+-// 		cudaMemset(g_dev_pres_delta, 0, sizeof(Real)*num_part2);
+-// 		cudaMemset(g_dev_bi,         0, sizeof(Real)*num_part2);
+-// 		cudaMemset(g_dev_ppe_resid,  0, sizeof(Real)*num_part2);
+-// 		// CUB Max-reduce temp storage (sized via dummy call — same array length for all 3 reduces)
+-// 		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+-// 		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
+-// 		cudaMalloc(&g_dev_resid_storage, g_resid_storage_bytes);
+-// 		if(tid==0){
+-// 			char fn[512];
+-// 			sprintf(fn, "./%s/PPE_iter_log.txt", OUTPUT_CASE_NAME);
+-// 			g_fp_ppe_log = fopen(fn, "w");
+-// 			if(g_fp_ppe_log){
+-// 				fprintf(g_fp_ppe_log, "# IMPLICIT_PPE Jacobi solver log\n");
+-// 				fprintf(g_fp_ppe_log, "# tolerance=%g  minIter=%d  maxIter=%d\n",
+-// 				        (double)PPE_TOLERANCE, (int)minIteration, (int)maxIteration);
+-// 				fprintf(g_fp_ppe_log, "# bi_max     = |rho*div(u*)/dt|_inf   (input divergence; same every iter)\n");
+-// 				fprintf(g_fp_ppe_log, "# resid_max  = |A*p_final - b|_inf    (true PPE residual; ~|div(u^{n+1})|*rho/dt)\n");
+-// 				fprintf(g_fp_ppe_log, "# delta_p    = max|p^{k+1} - p^k|     (Jacobi iteration delta; early-exit gate)\n");
+-// 				fprintf(g_fp_ppe_log, "# step\ttime\titer_used\tdelta_p\tbi_max\tresid_max\tconverged\n");
+-// 				fflush(g_fp_ppe_log);
+-// 			}
+-// 		}
+-// 	}
+-
+-// 	// Snapshot pres -> pres_old so the first delta is well-defined
+-// 	KERNEL_snapshot_pres<<<b,t>>>(dev_SP1, g_dev_pres_old);
+-// 	cudaDeviceSynchronize();
++#if CONSISTENT_PPE
++	//--- IISPH consistent-operator PPE: prep once, relaxed-Jacobi sweeps with early-exit ---
++	// A == div(applied symmetric pressure force) so converging this is a true projection.
++	// Stop when avg density error (mean|s_i-Ap_i|/rho0) < IISPH_ETA, capped at maxIteration.
++	b.x=(num_part2-1)/t.x+1;
+ 
+-// 	int_t ppe_iter_used = 0;
+-// 	Real  ppe_delta_p   = 0.0f;
+-// 	Real  ppe_bi_max    = 0.0f;
+-// 	Real  ppe_resid_max = 0.0f;
+-// 	int   ppe_converged = 0;
+-// 	int_t maxit_safe = (maxIteration>0) ? maxIteration : 1;
+-// 	int_t minit_safe = (minIteration>0) ? minIteration : 1;
+-
+-// 	for(int_t it=0; it<maxit_safe; it++){
+-// 		// Zero bi array so non-fluid slots don't pollute Max reduce (PPE_prep skips them via early return)
+-// 		cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
+-// 		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
+-// 		cudaDeviceSynchronize();
+-// 		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
+-// 		cudaDeviceSynchronize();
+-// 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+-// 		cudaDeviceSynchronize();
+-
+-// 		// Compute per-particle |p_new - p_old|, snapshot p -> pres_old
+-// 		KERNEL_compute_pres_delta<<<b,t>>>(dev_SP1, g_dev_pres_old, g_dev_pres_delta);
+-// 		cudaDeviceSynchronize();
+-
+-// 		// Max reduce -> device scalar, copy to host
+-// 		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+-// 		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
+-// 		cudaDeviceSynchronize();
+-// 		cudaMemcpy(&ppe_delta_p, g_d_pres_delta_max, sizeof(Real), cudaMemcpyDeviceToHost);
+-
+-// 		ppe_iter_used = it+1;
+-// 		if(ppe_iter_used >= minit_safe && ppe_delta_p < PPE_TOLERANCE){
+-// 			ppe_converged = 1;
+-// 			break;
+-// 		}
+-// 	}
+-
+-// 	// After loop: one extra PPE_prep with converged pres to refresh PPE1/PPE2,
+-// 	// then compute true residual |A*p - b|. bi is also refreshed (same value as last iter — u* unchanged).
+-// 	cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
+-// 	KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
+-// 	cudaDeviceSynchronize();
+-// 	KERNEL_compute_ppe_residual<<<b,t>>>(dev_SP1, g_dev_ppe_resid);
+-// 	cudaDeviceSynchronize();
++	// Lazy init: residual buffer + Sum-reduce storage + log (once, on first call)
++	if(g_iisph_resid==NULL){
++		cudaMalloc((void**)&g_iisph_resid, sizeof(Real)*num_part2);
++		cudaMalloc((void**)&g_iisph_d_sum, sizeof(Real));
++		cudaMemset(g_iisph_resid, 0, sizeof(Real)*num_part2);
++		cub::DeviceReduce::Sum(g_iisph_storage, g_iisph_storage_bytes, g_iisph_resid, g_iisph_d_sum, num_part2);
++		cudaMalloc(&g_iisph_storage, g_iisph_storage_bytes);
++		if(tid==0){
++			char fn[512]; sprintf(fn, "./%s/IISPH_log.txt", OUTPUT_CASE_NAME);
++			g_fp_iisph=fopen(fn,g_restarted?"a":"w");
++			if(g_fp_iisph && ckpt_log_is_new(g_fp_iisph)){ fprintf(g_fp_iisph,"# step\ttime\titer_used\tavg_dens_err\tconverged\n"); fflush(g_fp_iisph); }
++			char fc[512]; sprintf(fc, "./%s/IISPH_conv.txt", OUTPUT_CASE_NAME);
++			g_fp_conv=fopen(fc,g_restarted?"a":"w");
++			if(g_fp_conv && ckpt_log_is_new(g_fp_conv)){ fprintf(g_fp_conv,"# step\titer\tavg_div\n"); fflush(g_fp_conv); }
++		}
++	}
+ 
+-// 	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+-// 	                       g_dev_bi, g_d_bi_max, num_part2);
+-// 	cudaDeviceSynchronize();
+-// 	cudaMemcpy(&ppe_bi_max, g_d_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
++	KERNEL_iisph_prep<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
++	cudaDeviceSynchronize();
++	{
++		int_t nsweep=(maxIteration>0)?maxIteration:1;
++		int_t minit =(minIteration>0)?minIteration:1;
++		// On conv-log steps run the FULL sweep count (no early-exit) and record the per-iteration
++		// div curve, so we can see div(u^{n+1}) decreasing within a single step.
++		bool conv_log_step = (tid==0) && (IISPH_CONV_FREQ>0) && (count % (IISPH_CONV_FREQ>0?IISPH_CONV_FREQ:1) == 0) && (g_fp_conv!=NULL);
++		int_t used=0; Real avg_err=0.0f; Real prev_err=0.0f; int conv=0;
++		for(int_t it=0; it<nsweep; it++){
++			cudaMemsetAsync(g_iisph_resid, 0, sizeof(Real)*num_part2);
++			KERNEL_iisph_pass1<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
++			cudaDeviceSynchronize();
++			KERNEL_iisph_pass2<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_iisph_resid);
++			cudaDeviceSynchronize();
++			KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
++			cudaDeviceSynchronize();
+ 
+-// 	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
+-// 	                       g_dev_ppe_resid, g_d_resid_max, num_part2);
+-// 	cudaDeviceSynchronize();
+-// 	cudaMemcpy(&ppe_resid_max, g_d_resid_max, sizeof(Real), cudaMemcpyDeviceToHost);
+-
+-// 	// Per-step logging (only tid==0)
+-// 	if(tid==0){
+-// 		if(g_fp_ppe_log){
+-// 			fprintf(g_fp_ppe_log, "%d\t%.6g\t%d\t%.6e\t%.6e\t%.6e\t%d\n",
+-// 			        (int)count, (double)time, (int)ppe_iter_used,
+-// 			        (double)ppe_delta_p, (double)ppe_bi_max,
+-// 			        (double)ppe_resid_max, ppe_converged);
+-// 			fflush(g_fp_ppe_log);
+-// 		}
+-// 		if((count%50)==0){
+-// 			printf("PPE(implicit): iter=%d / %d, dp=%.3e, |bi|=%.3e, |A*p-b|=%.3e, conv=%d\n",
+-// 			       (int)ppe_iter_used, (int)maxit_safe,
+-// 			       (double)ppe_delta_p, (double)ppe_bi_max,
+-// 			       (double)ppe_resid_max, ppe_converged);
+-// 		}
+-// 	}
+-// #else
++			// Early-exit gate in DIVERGENCE units (not density): the IISPH residual is
++			// r_i = s_i-Ap_i = -dt*rho*div(u^{n+1}), so |rho*div(u^{n+1})/dt| = |r_i|/dt^2.
++			// This all-particle mean (non-fluid=0) is the SAME quantity as div_un1_avg, so the
++			// gate now measures the actual incompressibility, not the misleading density error.
++			Real rsum=0.0f;
++			cub::DeviceReduce::Sum(g_iisph_storage, g_iisph_storage_bytes, g_iisph_resid, g_iisph_d_sum, num_part2);
++			cudaDeviceSynchronize();
++			cudaMemcpy(&rsum, g_iisph_d_sum, sizeof(Real), cudaMemcpyDeviceToHost);
++			avg_err = rsum/((Real)num_part2*dt*dt);
++			used=it+1;
++			if(conv_log_step) fprintf(g_fp_conv,"%d\t%d\t%.6e\n",(int)count,(int)used,(double)avg_err);
++			// Convergence: absolute floor (avg_err<ETA) OR stagnation (this step's floor reached,
++			// per-sweep relative drop < STAG_TOL). Stagnation prevents the 200-cap spin when the
++			// developed-flow floor rises above IISPH_ETA.
++			Real rel_drop = (it>0)? (prev_err-avg_err)/(prev_err+1e-20f) : 1.0f;
++			if(!conv_log_step && used>=minit && (avg_err<IISPH_ETA || rel_drop<IISPH_STAG_TOL)){ conv=1; break; }
++			prev_err=avg_err;
++		}
++		if(conv_log_step){ conv=(avg_err<IISPH_ETA); fflush(g_fp_conv); }
++		if(tid==0){
++			if(g_fp_iisph){ fprintf(g_fp_iisph,"%d\t%.6g\t%d\t%.6e\t%d\n",(int)count,(double)time,(int)used,(double)avg_err,conv); fflush(g_fp_iisph); }
++			if((count%50)==0) printf("IISPH: iter=%d/%d  avg_dens_err=%.3e  conv=%d\n",(int)used,(int)nsweep,(double)avg_err,conv);
++		}
++	}
++#else
++#if IMPLICIT_PPE
++	//--- Implicit Jacobi PPE: iterate up to maxIteration, early-exit on max|delta p| < tol ---
++	// Tracks 3 metrics per step:
++	//   - Jacobi delta:    max|p^{k+1} - p^k|  (iteration convergence indicator, early-exit gate)
++	//   - max|bi|:         max|rho*div(u*)/dt| (input incompressibility error from predictor)
++	//   - max|A*p - b|:    true PPE residual   (proportional to |div(u^{n+1})|, the real metric)
++	// NOTE: single-GPU only. The g_dev_* buffers are file-scope static (shared across pthreads),
++	// so multi-GPU would race/cross-device. Run the implicit comparison with 1 GPU.
++	b.x=(num_part2-1)/t.x+1;
++
++	// Lazy init (once, on first SOPHIA_single_ISPH call)
++	if(g_dev_pres_old==NULL){
++		cudaMalloc((void**)&g_dev_pres_old,    sizeof(Real)*num_part2);
++		cudaMalloc((void**)&g_dev_pres_delta,  sizeof(Real)*num_part2);
++		cudaMalloc((void**)&g_dev_bi,          sizeof(Real)*num_part2);
++		cudaMalloc((void**)&g_dev_ppe_resid,   sizeof(Real)*num_part2);
++		cudaMalloc((void**)&g_d_pres_delta_max,sizeof(Real));
++		cudaMalloc((void**)&g_d_bi_max,        sizeof(Real));
++		cudaMalloc((void**)&g_d_resid_max,     sizeof(Real));
++		cudaMemset(g_dev_pres_old,   0, sizeof(Real)*num_part2);
++		cudaMemset(g_dev_pres_delta, 0, sizeof(Real)*num_part2);
++		cudaMemset(g_dev_bi,         0, sizeof(Real)*num_part2);
++		cudaMemset(g_dev_ppe_resid,  0, sizeof(Real)*num_part2);
++		// CUB Max-reduce temp storage (sized via dummy call — same array length for all 3 reduces)
++		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
++		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
++		cudaMalloc(&g_dev_resid_storage, g_resid_storage_bytes);
++		if(tid==0){
++			char fn[512];
++			sprintf(fn, "./%s/PPE_iter_log.txt", OUTPUT_CASE_NAME);
++			g_fp_ppe_log = fopen(fn, g_restarted?"a":"w");
++			if(g_fp_ppe_log && ckpt_log_is_new(g_fp_ppe_log)){
++				fprintf(g_fp_ppe_log, "# IMPLICIT_PPE Jacobi solver log\n");
++				fprintf(g_fp_ppe_log, "# tolerance=%g  minIter=%d  maxIter=%d\n",
++				        (double)PPE_TOLERANCE, (int)minIteration, (int)maxIteration);
++				fprintf(g_fp_ppe_log, "# bi_max     = |rho*div(u*)/dt|_inf   (input divergence; same every iter)\n");
++				fprintf(g_fp_ppe_log, "# resid_max  = |A*p_final - b|_inf    (true PPE residual; ~|div(u^{n+1})|*rho/dt)\n");
++				fprintf(g_fp_ppe_log, "# delta_p    = max|p^{k+1} - p^k|     (Jacobi iteration delta; early-exit gate)\n");
++				fprintf(g_fp_ppe_log, "# step\ttime\titer_used\tdelta_p\tbi_max\tresid_max\tconverged\n");
++				fflush(g_fp_ppe_log);
++			}
++		}
++	}
++
++	// Snapshot pres -> pres_old so the first delta is well-defined
++	KERNEL_snapshot_pres<<<b,t>>>(dev_SP1, g_dev_pres_old);
++	cudaDeviceSynchronize();
++
++	int_t ppe_iter_used = 0;
++	Real  ppe_delta_p   = 0.0f;
++	Real  ppe_bi_max    = 0.0f;
++	Real  ppe_resid_max = 0.0f;
++	int   ppe_converged = 0;
++	int_t maxit_safe = (maxIteration>0) ? maxIteration : 1;
++	int_t minit_safe = (minIteration>0) ? minIteration : 1;
++
++	for(int_t it=0; it<maxit_safe; it++){
++		// Zero bi array so non-fluid slots don't pollute Max reduce (PPE_prep skips them via early return)
++		cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
++		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
++		cudaDeviceSynchronize();
++		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
++		cudaDeviceSynchronize();
++		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
++		cudaDeviceSynchronize();
++
++		// Compute per-particle |p_new - p_old|, snapshot p -> pres_old
++		KERNEL_compute_pres_delta<<<b,t>>>(dev_SP1, g_dev_pres_old, g_dev_pres_delta);
++		cudaDeviceSynchronize();
++
++		// Max reduce -> device scalar, copy to host
++		cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
++		                       g_dev_pres_delta, g_d_pres_delta_max, num_part2);
++		cudaDeviceSynchronize();
++		cudaMemcpy(&ppe_delta_p, g_d_pres_delta_max, sizeof(Real), cudaMemcpyDeviceToHost);
++
++		ppe_iter_used = it+1;
++		if(ppe_iter_used >= minit_safe && ppe_delta_p < PPE_TOLERANCE){
++			ppe_converged = 1;
++			break;
++		}
++	}
++
++	// After loop: one extra PPE_prep with converged pres to refresh PPE1/PPE2,
++	// then compute true residual |A*p - b|. bi is also refreshed (same value as last iter — u* unchanged).
++	cudaMemsetAsync(g_dev_bi, 0, sizeof(Real)*num_part2);
++	KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_dev_bi);
++	cudaDeviceSynchronize();
++	KERNEL_compute_ppe_residual<<<b,t>>>(dev_SP1, g_dev_ppe_resid);
++	cudaDeviceSynchronize();
++
++	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
++	                       g_dev_bi, g_d_bi_max, num_part2);
++	cudaDeviceSynchronize();
++	cudaMemcpy(&ppe_bi_max, g_d_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
++
++	cub::DeviceReduce::Max(g_dev_resid_storage, g_resid_storage_bytes,
++	                       g_dev_ppe_resid, g_d_resid_max, num_part2);
++	cudaDeviceSynchronize();
++	cudaMemcpy(&ppe_resid_max, g_d_resid_max, sizeof(Real), cudaMemcpyDeviceToHost);
++
++	// Per-step logging (only tid==0)
++	if(tid==0){
++		if(g_fp_ppe_log){
++			fprintf(g_fp_ppe_log, "%d\t%.6g\t%d\t%.6e\t%.6e\t%.6e\t%d\n",
++			        (int)count, (double)time, (int)ppe_iter_used,
++			        (double)ppe_delta_p, (double)ppe_bi_max,
++			        (double)ppe_resid_max, ppe_converged);
++			fflush(g_fp_ppe_log);
++		}
++		if((count%50)==0){
++			printf("PPE(implicit): iter=%d / %d, dp=%.3e, |bi|=%.3e, |A*p-b|=%.3e, conv=%d\n",
++			       (int)ppe_iter_used, (int)maxit_safe,
++			       (double)ppe_delta_p, (double)ppe_bi_max,
++			       (double)ppe_resid_max, ppe_converged);
++		}
++	}
++#else
+ 	//--- EISPH (Explicit ISPH, 1-sweep Jacobi: current production) ---
+ 	for(int_t it=0;it<=0;it++){   // For iterative(implicit) pressure solver
+ 		// PPE.cuh
+ 		b.x=(num_part2-1)/t.x+1;
+-		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3);
++		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, NULL);
+ 		cudaDeviceSynchronize();
+ 		KERNEL_PPE_calc3D<<<b,t>>>(dev_SP1);
+ 		cudaDeviceSynchronize();
+@@ -342,7 +659,10 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 		KERNEL_Neumann_boundary3D<<<b,t>>>(g_str,g_end,dev_SP1,dev_SP2,dev_P3);
+ 		cudaDeviceSynchronize();
+ 	}
+-//#endif
++#endif
++#endif  // CONSISTENT_PPE
++
++	// (PPE_DIAG moved AFTER the corrector so div(u^{n+1}) can be measured — see below.)
+ 
+ //-------------------------------------------------------------------------------------------------
+ // 압력힘 계산
+@@ -362,6 +682,95 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 	// Interior particles skip time update (buffer_type==99 early return in KERNEL_time_update_projection)
+ 	// → dev_P1 retains zeroed state; no separate zeroing needed here
+ 
++#if PPE_DIAG
++	//--- Incompressibility diagnostic (post-corrector, so u^{n+1} exists) every PPE_DIAG_FREQ steps ---
++	// bi_max      = max|rho*div(u*)/dt|       (INPUT divergence, before pressure; from dev_SP1)
++	// resid_max   = max|A_brookshaw*p - b|     (Brookshaw residual; meaningful only for Brookshaw runs)
++	// div_un1_max = max|rho*div(u^{n+1})/dt|   (OUTPUT divergence; solver-agnostic real metric)
++	// div_un1_avg = fluid-mean of the same     (geometry dev_SP1, corrected velocity dev_P1)
++	if(tid==0 && (count % PPE_DIAG_FREQ == 0)){
++		b.x=(num_part2-1)/t.x+1;
++
++		if(g_diag_bi==NULL){
++			cudaMalloc((void**)&g_diag_bi,          sizeof(Real)*num_part2);
++			cudaMalloc((void**)&g_diag_resid,       sizeof(Real)*num_part2);
++			cudaMalloc((void**)&g_d_diag_bi_max,    sizeof(Real));
++			cudaMalloc((void**)&g_d_diag_resid_max, sizeof(Real));
++			cudaMalloc((void**)&g_d_diag_sum,       sizeof(Real));
++			size_t bmax=0,bsum=0;
++			cub::DeviceReduce::Max(NULL, bmax, g_diag_bi, g_d_diag_bi_max, num_part2);
++			cub::DeviceReduce::Sum(NULL, bsum, g_diag_bi, g_d_diag_sum,    num_part2);
++			g_diag_storage_bytes=(bmax>bsum)?bmax:bsum;
++			cudaMalloc(&g_diag_storage, g_diag_storage_bytes);
++
++			char fn[512];
++#if IMPLICIT_PPE
++			sprintf(fn, "./%s/PPE_diag_implicit.csv", OUTPUT_CASE_NAME);
++#else
++			sprintf(fn, "./%s/PPE_diag_explicit.csv", OUTPUT_CASE_NAME);
++#endif
++			g_fp_diag=fopen(fn,g_restarted?"a":"w");
++			if(g_fp_diag && ckpt_log_is_new(g_fp_diag)){ fprintf(g_fp_diag,"step,time,bi_max,resid_max,div_un1_max,div_un1_avg,div_un1_plain_max,div_un1_plain_avg\n"); fflush(g_fp_diag); }
++
++			// Cache fluid count for the average
++			cudaMemsetAsync(g_diag_resid, 0, sizeof(Real)*num_part2);
++			KERNEL_fluid_mask<<<b,t>>>(dev_SP1, g_diag_resid);
++			cudaDeviceSynchronize();
++			Real fsum=0.0f;
++			cub::DeviceReduce::Sum(g_diag_storage, g_diag_storage_bytes, g_diag_resid, g_d_diag_sum, num_part2);
++			cudaDeviceSynchronize();
++			cudaMemcpy(&fsum, g_d_diag_sum, sizeof(Real), cudaMemcpyDeviceToHost);
++			g_n_fluid=(int_t)(fsum+0.5f); if(g_n_fluid<1) g_n_fluid=1;
++		}
++
++		// bi_max (input divergence, u* in dev_SP1). Also refreshes dev_SP1 PPE1/PPE2 for resid.
++		cudaMemsetAsync(g_diag_bi, 0, sizeof(Real)*num_part2);
++		KERNEL_PPE_prep3D<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_SP2,dev_P3, g_diag_bi);
++		cudaDeviceSynchronize();
++		Real diag_bi_max=0.0f;
++		cub::DeviceReduce::Max(g_diag_storage, g_diag_storage_bytes, g_diag_bi, g_d_diag_bi_max, num_part2);
++		cudaDeviceSynchronize();
++		cudaMemcpy(&diag_bi_max, g_d_diag_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
++
++		// resid_max (Brookshaw residual)
++		cudaMemsetAsync(g_diag_resid, 0, sizeof(Real)*num_part2);
++		KERNEL_compute_ppe_residual<<<b,t>>>(dev_SP1, g_diag_resid);
++		cudaDeviceSynchronize();
++		Real diag_resid_max=0.0f;
++		cub::DeviceReduce::Max(g_diag_storage, g_diag_storage_bytes, g_diag_resid, g_d_diag_resid_max, num_part2);
++		cudaDeviceSynchronize();
++		cudaMemcpy(&diag_resid_max, g_d_diag_resid_max, sizeof(Real), cudaMemcpyDeviceToHost);
++
++		// div(u^{n+1}) measured TWO ways for a fair comparison: KGC (explicit operator) and
++		// plain gradW (IISPH operator). Geometry dev_SP1, corrected velocity dev_P1.
++		Real dmax=0.0f,dsum=0.0f, dmax_p=0.0f,dsum_p=0.0f;
++		// (a) KGC
++		cudaMemsetAsync(g_diag_bi, 0, sizeof(Real)*num_part2);
++		KERNEL_compute_div_un1<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_P1,dev_SP2,dev_P3, g_diag_bi, 1);
++		cudaDeviceSynchronize();
++		cub::DeviceReduce::Max(g_diag_storage, g_diag_storage_bytes, g_diag_bi, g_d_diag_bi_max, num_part2);
++		cudaDeviceSynchronize(); cudaMemcpy(&dmax, g_d_diag_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
++		cub::DeviceReduce::Sum(g_diag_storage, g_diag_storage_bytes, g_diag_bi, g_d_diag_sum, num_part2);
++		cudaDeviceSynchronize(); cudaMemcpy(&dsum, g_d_diag_sum, sizeof(Real), cudaMemcpyDeviceToHost);
++		// (b) plain gradW
++		cudaMemsetAsync(g_diag_bi, 0, sizeof(Real)*num_part2);
++		KERNEL_compute_div_un1<<<b,t>>>(dt,g_str,g_end,dev_SP1,dev_P1,dev_SP2,dev_P3, g_diag_bi, 0);
++		cudaDeviceSynchronize();
++		cub::DeviceReduce::Max(g_diag_storage, g_diag_storage_bytes, g_diag_bi, g_d_diag_bi_max, num_part2);
++		cudaDeviceSynchronize(); cudaMemcpy(&dmax_p, g_d_diag_bi_max, sizeof(Real), cudaMemcpyDeviceToHost);
++		cub::DeviceReduce::Sum(g_diag_storage, g_diag_storage_bytes, g_diag_bi, g_d_diag_sum, num_part2);
++		cudaDeviceSynchronize(); cudaMemcpy(&dsum_p, g_d_diag_sum, sizeof(Real), cudaMemcpyDeviceToHost);
++		Real div_un1_avg=dsum/(Real)g_n_fluid, div_un1_plain_avg=dsum_p/(Real)g_n_fluid;
++
++		if(g_fp_diag){
++			fprintf(g_fp_diag,"%d,%.6g,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
++			        (int)count,(double)time,(double)diag_bi_max,(double)diag_resid_max,
++			        (double)dmax,(double)div_un1_avg,(double)dmax_p,(double)div_un1_plain_avg);
++			fflush(g_fp_diag);
++		}
++	}
++#endif
++
+ 	// // Monitor target particle (once per step, after all forces applied)
+ 	// KERNEL_monitor_particle<<<b,t>>>(dev_P1, dev_P3, count, 4);
+ 	// cudaDeviceSynchronize();
+@@ -376,12 +785,21 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+  	// KERNEL_Neumann_boundary_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+ 	//KERNEL_donothing_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+ 	// KERNEL_open_boundary_extrapolation_buffer3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+-	//cudaDeviceSynchronize();
++	// Outlet (buffer_type==2): Orlanski convective outflow + pres=0 anchor.
++	KERNEL_convective_outflow3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3,dt);
++	cudaDeviceSynchronize();
+ 	KERNEL_periodic_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+ 	cudaDeviceSynchronize();
+ 	KERNEL_freeslip_boundary3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+ 	cudaDeviceSynchronize();
+ 
++	// Rayleigh damping sponge near the ceiling (uz only). Absorbs grid-scale
++	// vertical oscillations trapped under reflective freeslip ceiling.
++	if((Real)SPONGE_GAMMA_MAX > (Real)0.0){
++		KERNEL_sponge_ceiling<<<b,t>>>(dev_P1, dt);
++		cudaDeviceSynchronize();
++	}
++
+ // #if CASE_ID >= 500 && CASE_ID < 600
+ // 	// Case CS: sustain inlet buffer at log-law profile (uses us_update; with MOST off it stays at us_ini)
+ // 	if(dim==3) KERNEL_Recycling3D<<<b,t>>>(g_str,g_end,dev_P1,dev_SP2,dev_P3);
+@@ -390,18 +808,37 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ 
+ 	KERNEL_compute_vorticity3D<<<b,t>>>(g_str,g_end,dev_P1,dev_P3);
+ 	cudaDeviceSynchronize();
+-
+-	// Time-averaging accumulation (gated by AVG_START_TIME defined in Parameters.cuh / case_config.cuh)
+-	if(time >= (Real)AVG_START_TIME){
++#endif  // !LDM_MEAN_MODE  (end of SPH solver block)
++
++#if !LDM_MEAN_MODE
++	// Time-averaging accumulation, only within [h_avg_start, h_avg_end).
++	// Both bounds default to ∞ until QS detection latches them.
++	// Time-averaging accumulation: [h_avg_start, h_avg_end) 구간에서만 누적.
++	// AVG_START_TIME<=0 이면 h_avg_start=0, h_avg_end=inf 라 매 스텝 누적되지만
++	// h_avg_end 가 무한이라 mean field dump 는 일어나지 않는다(=기존 transient 동작).
++	if(time >= h_avg_start && time < h_avg_end){
++		b.x=(num_part2-1)/t.x+1;
+ 		KERNEL_accumulate_avg<<<b,t>>>(dev_P1);
+ 		cudaDeviceSynchronize();
+ 	}
+ 
++	// One-shot mean field dump when the latched window closes (Run A →
++	// produces MEAN_FIELD_PATH consumed by Run B with LDM_MEAN_MODE=1).
++	if(h_avg_end < (Real)1e29 && time >= h_avg_end && !g_mean_field_dumped){
++		if(tid==0){
++			cudaMemcpy(file_P1, dev_P1, num_part2*sizeof(part1), cudaMemcpyDeviceToHost);
++			save_mean_field(file_P1, num_part2, MEAN_FIELD_PATH);
++		}
++		pthread_barrier_wait(&barrier);
++		g_mean_field_dumped = true;
++	}
++#endif  // !LDM_MEAN_MODE
++
+ //-------------------------------------------------------------------------------------------------
+-// LDM coupling — gated by AVG_START_TIME (skip predictor/advection/deposition/conc until steady state)
++// LDM coupling — gated by h_avg_start (skip predictor/advection/deposition/conc until quasi-steady)
+ //-------------------------------------------------------------------------------------------------
+ 
+-	if(time >= (Real)AVG_START_TIME && (count%freq_LDM==0)){
++	if(time >= h_avg_start && (count%freq_LDM==0)){
+ 		// b.x=(num_part_LDM-1)/t.x+1;
+ 		// particle_releasing_Dispersion<<<b,t>>>(dt,freq_LDM,time,time_end,dev_LP1);
+ 		if(time_type==Pre_Cor){
+@@ -468,29 +905,33 @@ void SOPHIA_single_ISPH(int_t*g_idx,int_t*p_idx,int_t*g_idx_in,int_t*p_idx_in,in
+ // 출력
+ //-------------------------------------------------------------------------------------------------
+ 
+-	if((count%freq_output)==0){
+-		// printf("save plot...........................\n");
+-		cudaMemcpy(file_P1,dev_P1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
+-		cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
+-		cudaMemcpy(file_P3,dev_P3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
+-
+-		if(count==0)save_vtk_bin_single_boundary(file_P1,file_P2,file_P3);
+-		if(count==0)save_vtk_bin_single_buildings(file_P1,file_P2,file_P3);
+-		//save_vtk_bin_single_fluid_CaseA(file_P1,file_P2,file_P3);     // Total fluid particles
+-		save_vtk_bin_single_fluid(file_P1,file_P2,file_P3);
+-		save_vtk_bin_single_fluid_condition(file_P1,file_P2,file_P3);    // Fluid particle with condition
+-		save_vtk_bin_single_vorticity(file_P1,file_P2,file_P3);
+-		
+-		// cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
+-		// save_vtk_bin_single_test(file_P1,file_P2,file_P3);
+-		//cudaDeviceSynchronize();
+-	}
+-
+-	if(count%100==0){
+-		cudaMemcpy(file_LP1,dev_LP1,num_part_LDM*sizeof(L_part1),cudaMemcpyDeviceToHost);
+-		save_vtk_bin_single_LDM(file_LP1);
++	// Output cadence: relative to the averaging-start latch if it has fired,
++	// otherwise relative to the simulation start. Geometry (boundary,
++	// buildings) is still one-shot at count==0.
++	int_t count_eff = count;
++
++	if(count_eff % 25 == 0){
++    	cudaMemcpy(file_P1, dev_P1, num_part2*sizeof(part1), cudaMemcpyDeviceToHost);
++    	cudaMemcpy(file_P2, dev_SP2, num_part2*sizeof(part2), cudaMemcpyDeviceToHost);
++    	cudaMemcpy(file_P3, dev_P3, num_part2*sizeof(part3), cudaMemcpyDeviceToHost);
++
++    	if(count == 0){
++        	save_vtk_bin_single_boundary(file_P1, file_P2, file_P3);
++        	save_vtk_bin_single_buildings(file_P1, file_P2, file_P3);
++    	}
++
++    	if(count_avg < 0){
++        	if(count_eff%SLICE_DUMP_EVERY==0) save_vtk_bin_single_fluid_condition(file_P1, file_P2, file_P3);
++
++    	} 
++		else {
++        	if(count_eff%SLICE_DUMP_EVERY==0) save_vtk_bin_single_fluid_condition(file_P1, file_P2, file_P3);
++        	if(count_eff%FULL_DUMP_EVERY==0) save_vtk_bin_single_fluid(file_P1, file_P2, file_P3);
++        	if(count_eff%VORT_DUMP_EVERY==0) save_vtk_bin_single_vorticity(file_P1, file_P2, file_P3);
++        	cudaMemcpy(file_LP1, dev_LP1, num_part_LDM*sizeof(L_part1), cudaMemcpyDeviceToHost);
++        	save_vtk_bin_single_LDM(file_LP1);
++    	}
+ 	}
+-
+ }
+ 
+ //-------------------------------------------------------------------------------------------------
+@@ -863,6 +1304,69 @@ void*ISPH_Calc(void*arg){
+ 	// KERNEL_clc_TemptoEnthalpy<<<b,t>>>(dev_P1,dev_P2);
+ 	// cudaDeviceSynchronize();
+ 
++	// Initialise averaging-window bounds. AVG_START_TIME == 0 → auto-detect
++	// via QS criterion in the 50-step diagnostic block below. >0 → fixed.
++	// Time-averaging DISABLED (plain transient run): open the LDM gate from
++	// t=0 so each LDM particle releases at its own absolute t_release. No QS
++	// auto-detect, no accumulation, no mean-field freeze, no early stop.
++	if(tid==0){
++		if((Real)AVG_START_TIME > (Real)0.0){
++			// 고정 평균 구간. AVG_END_TIME>0 이면 그 값, 아니면 start+AVG_WINDOW.
++			h_avg_start = (Real)AVG_START_TIME;
++			if((Real)AVG_END_TIME > (Real)0.0)     h_avg_end = (Real)AVG_END_TIME;
++			else if((Real)AVG_WINDOW > (Real)0.0)  h_avg_end = h_avg_start + (Real)AVG_WINDOW;
++			else                                   h_avg_end = (Real)1e30;
++			printf("[avg] ENABLED (fixed): window [%.3f, %.3f), LDM gate opens at %.3f\n",
++			       (double)h_avg_start, (double)h_avg_end, (double)h_avg_start);
++		} else {
++			h_avg_start = (Real)0.0;
++			h_avg_end   = (Real)1e30;
++			printf("[avg] DISABLED: LDM gate open from t=0; releases use absolute t_release.\n");
++		}
++		Real hs = h_avg_start, he = h_avg_end;
++		cudaMemcpyToSymbol(avg_start_dyn, &hs, sizeof(Real));
++		cudaMemcpyToSymbol(avg_end_dyn,   &he, sizeof(Real));
++	}
++	pthread_barrier_wait(&barrier);
++
++#if LDM_MEAN_MODE
++	// Mean-flow LDM mode: load_mean_field is now called inside SOPHIA_single_ISPH
++	// (count==0 path, AFTER the first NNPS sort) so the mean_field.bin record
++	// indices (saved in Run A's sorted order) align with the current sorting.
++	// Only the LDM gate is forced open from t=0 here.
++	if(tid==0){
++		h_avg_start = (Real)0.0;
++		h_avg_end   = (Real)1e30;
++		Real hs = h_avg_start, he = h_avg_end;
++		cudaMemcpyToSymbol(avg_start_dyn, &hs, sizeof(Real));
++		cudaMemcpyToSymbol(avg_end_dyn,   &he, sizeof(Real));
++		count_avg = 0;
++		printf("[mean] LDM gate forced open: h_avg_start=0, h_avg_end=inf, count_avg=0\n");
++	}
++	pthread_barrier_wait(&barrier);
++#endif
++
++	// Resume from checkpoint (env SOPHIA_RESTART=<path>). Any failure aborts instead of
++	// silently starting from t=0 and overwriting the run's outputs.
++	{
++		const char*restart_path = getenv("SOPHIA_RESTART");
++		if(restart_path && restart_path[0]){
++			bool ok = (ngpu==1);
++			if(!ok) printf("[ckpt] FATAL: restart supports ngpu==1 only (ngpu=%d)\n", (int)ngpu);
++#if LDM_MEAN_MODE
++			ok = false;
++			printf("[ckpt] FATAL: restart is not supported with LDM_MEAN_MODE (mean field loads at count==0)\n");
++#endif
++			if(ok) ok = load_checkpoint(restart_path, dev_P1, dev_P2, g_str, g_end, dev_LP1, dev_LP2,
++			                            g_str_LDM, g_end_LDM, file_P1, file_P2, file_LP1, file_LP2);
++			if(!ok || count<=0){
++				printf("[ckpt] aborting (restart requested but not possible)\n");
++				fflush(stdout);
++				exit(1);
++			}
++		}
++	}
++
+ 	while(1){
+ 
+ 		if(ngpu==1){
+@@ -879,6 +1383,14 @@ void*ISPH_Calc(void*arg){
+ 			time+=dt;
+ 			count++;
+ 
++			// Unified count_avg latch: covers the manual AVG_START_TIME case
++			// where h_avg_start was set at startup (no QS event fires).
++			// QS/force-latch paths set count_avg directly inside the 50-step
++			// block; the `count_avg<0` guard prevents double-latching.
++			if(count_avg < 0 && h_avg_start < (Real)1e29 && time >= h_avg_start){
++				count_avg = count;
++			}
++
+ 			//timestep is updated every 10 steps ------------ estimate new timestep (Goswami & Pajarola(2011))
+ 			if((count%50)==0){
+ 				dim3 t,b;
+@@ -946,34 +1458,92 @@ void*ISPH_Calc(void*arg){
+ 					cudaMemcpy(&sum_uu0, d_sum_uu, sizeof(Real), cudaMemcpyDeviceToHost);
+ 					unsigned int h_ac=0;
+ 					cudaMemcpyFromSymbol(&h_ac, avg_count, sizeof(unsigned int));
+-					printf("    [domain] Σk_turb=%.4e   Σ½|u|²=%.4e   avg_count=%u (AVG_START_TIME=%.2f)\n\n",
+-						sum_kt0, sum_uu0, h_ac, (double)AVG_START_TIME);
++					printf("    [domain] Σk_turb=%.4e   Σ½|u|²=%.4e   avg_count=%u (h_avg_start=%.3f)\n\n",
++						sum_kt0, sum_uu0, h_ac, (double)h_avg_start);
++
++					// Quasi-steady auto-detect: relative std of Σ½|u|² over the
++					// last QS_DETECT_N samples. Latch h_avg_start once.
++					// Sample only every QS_SAMPLE_STRIDE'th 50-step block so the
++					// effective window = N × STRIDE × 50 simulation steps.
++					if(h_avg_start > (Real)1e29 &&
++					   ((count / 50) % QS_SAMPLE_STRIDE == 0)){
++						g_qs_uu_buf[g_qs_uu_head] = sum_uu0;
++						g_qs_uu_head = (g_qs_uu_head + 1) % QS_DETECT_N;
++						if(g_qs_uu_fill < QS_DETECT_N) g_qs_uu_fill++;
++
++						if(g_qs_uu_fill == QS_DETECT_N){
++							Real mean = 0.0, var = 0.0;
++							for(int q=0; q<QS_DETECT_N; q++) mean += g_qs_uu_buf[q];
++							mean /= (Real)QS_DETECT_N;
++							for(int q=0; q<QS_DETECT_N; q++){
++								Real d = g_qs_uu_buf[q] - mean;
++								var += d*d;
++							}
++							var /= (Real)QS_DETECT_N;
++							Real rel_std = (mean > (Real)1e-12) ? sqrt(var) / mean : (Real)1e30;
++							printf("    [QS] uu sliding rel_std=%.4e (eps=%.4e, N=%d, mean=%.4e)\n",
++								(double)rel_std, (double)QS_DETECT_EPS, (int)QS_DETECT_N, (double)mean);
++
++							if(rel_std < (Real)QS_DETECT_EPS && time >= (Real)QS_MIN_TIME){
++								h_avg_start = time;
++								if((Real)AVG_END_TIME > (Real)0.0)        h_avg_end = (Real)AVG_END_TIME;
++								else if((Real)AVG_WINDOW > (Real)0.0)     h_avg_end = h_avg_start + (Real)AVG_WINDOW;
++								else                                      h_avg_end = (Real)1e30;
++								Real hs = h_avg_start, he = h_avg_end;
++								cudaMemcpyToSymbol(avg_start_dyn, &hs, sizeof(Real));
++								cudaMemcpyToSymbol(avg_end_dyn,   &he, sizeof(Real));
++								count_avg = count;
++								printf("    [QS] >>> quasi-steady DETECTED at t=%.3f (count=%d). avg window=[%.3f, %.3f]\n",
++									(double)time, (int)count, (double)h_avg_start, (double)h_avg_end);
++							}
++						}
++
++						// Force-latch fallback: if QS still not detected by
++						// AVG_FORCE_START_TIME, start averaging anyway.
++						if(h_avg_start > (Real)1e29 &&
++						   (Real)AVG_FORCE_START_TIME > (Real)0.0 &&
++						   time >= (Real)AVG_FORCE_START_TIME){
++							h_avg_start = time;
++							if((Real)AVG_END_TIME > (Real)0.0)        h_avg_end = (Real)AVG_END_TIME;
++							else if((Real)AVG_WINDOW > (Real)0.0)     h_avg_end = h_avg_start + (Real)AVG_WINDOW;
++							else                                      h_avg_end = (Real)1e30;
++							Real hs = h_avg_start, he = h_avg_end;
++							cudaMemcpyToSymbol(avg_start_dyn, &hs, sizeof(Real));
++							cudaMemcpyToSymbol(avg_end_dyn,   &he, sizeof(Real));
++							count_avg = count;
++							printf("    [QS] >>> force-latched at t=%.3f (count=%d, no QS by AVG_FORCE_START_TIME=%.3f). avg window=[%.3f, %.3f]\n",
++								(double)time, (int)count, (double)AVG_FORCE_START_TIME,
++								(double)h_avg_start, (double)h_avg_end);
++						}
++					}
+ 				}
+ 			}
+ 		}
+ 
++		// Periodic checkpoint. count has already been advanced, so the file resumes at the next step.
++		if(tid==0 && ngpu==1 && (int_t)CKPT_EVERY > 0 && (count % (int_t)CKPT_EVERY)==0 && time < time_end){
++			save_checkpoint(CKPT_PATH, dev_P1, dev_P2, g_str, g_end, dev_LP1, dev_LP2,
++			                g_str_LDM, g_end_LDM, file_P1, file_P2, file_LP1, file_LP2);
++		}
++
+ 		pthread_barrier_wait(&barrier);
+ 		if(time>=time_end) break;
++		// Early stop: LDM_DURATION_AFTER_AVG seconds past h_avg_start latch.
++		if((Real)LDM_DURATION_AFTER_AVG > (Real)0.0 &&
++		   h_avg_start < (Real)1e29 &&
++		   time >= h_avg_start + (Real)LDM_DURATION_AFTER_AVG){
++			if(tid==0) printf("[avg] LDM_DURATION_AFTER_AVG reached (h_avg_start=%.3f + %.2f); stopping.\n",
++			                 (double)h_avg_start, (double)LDM_DURATION_AFTER_AVG);
++			break;
++		}
+ 
+ 	}
+ 
+ 
+ 	//-------------------------------------------------------------------------------------------------
+-	// ##. Save Restart File
++	// ##. Save Restart File — periodic checkpoints are written inside the loop (CKPT_EVERY, save_checkpoint)
+ 	//-------------------------------------------------------------------------------------------------
+ 
+-	// if(ngpu==1) {
+-	//
+-	// 	save_restart(file_P1,file_P2,file_P3);
+-	// 	cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
+-	// 	cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
+-	// 	cudaMemcpy(file_P3,dev_SP3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
+-	//
+-	//
+-	// 	free(file_P2);
+-	// 	free(file_P3);
+-	// }
+-
+ 	//-------------------------------------------------------------------------------------------------
+ 	// ##. Memory Free
+ 	//-------------------------------------------------------------------------------------------------
+diff --git a/Parameters.cuh b/Parameters.cuh
+index 2a65736..8c52056 100644
+--- a/Parameters.cuh
++++ b/Parameters.cuh
+@@ -107,8 +107,10 @@
+ //   1 = Vila 1999 conservative Eulerian advection, 1st-order upwind (Godunov).
+ //       eulert = sum 2mj/(rhoi+rhoj)(T*-Ti)(u*.dW), u*=0.5(ui+uj),
+ //       T* = upwind state (Tj if neighbour upwind, Ti otherwise). Monotone by construction.
+-// See Temperature_advection.md and functions_PPE.cuh:KERNEL_advection_force3D.
++// See docs/Temperature_advection.md and functions_PPE.cuh:KERNEL_advection_force3D.
++#ifndef RIEMANN_EULERT
+ #define RIEMANN_EULERT 1
++#endif
+ //////////////////////////////////////
+ 
+ //// PPE solver mode ////
+@@ -121,10 +123,87 @@
+ //     printed to stdout every 50 steps. minIteration (vii[20]) is honoured
+ //     as a lower bound (no early exit before that). Costs N* the per-step
+ //     PPE time (typically 100-1000* slower per step on large grids).
++#ifndef IMPLICIT_PPE
+ #define IMPLICIT_PPE     0
+-#define PPE_TOLERANCE    1e-5f
++#endif
++// Early-exit gate: stop sweeping once max|p^{k+1}-p^k| < PPE_TOLERANCE [Pa].
++// Capped at maxIteration (solv-file maximum-iteration = 200). Early in the run
++// it will hit the 200 cap; once the flow develops the warm-started per-step
++// pressure increment shrinks and this gate fires earlier. Retune from
++// ./<CASE>/PPE_iter_log.txt (iter_used, delta_p columns).
++#ifndef PPE_TOLERANCE
++#define PPE_TOLERANCE    1e-3f
++#endif
+ /////////////////////////
+ 
++//// PPE residual diagnostic (explicit & implicit) ////
++// 1 = every PPE_DIAG_FREQ steps, recompute the PPE source bi and the TRUE
++//     residual |A*p - b| using the post-solve pressure, max-reduce both, and
++//     append a CSV row to ./<OUTPUT_CASE_NAME>/PPE_diag_{explicit,implicit}.csv
++//     (file name picked by IMPLICIT_PPE so the two runs don't clobber).
++//     resid_max ~ |div(u^{n+1})| is the real incompressibility metric: lets the
++//     explicit(1-sweep) and implicit(N-sweep) runs be compared on equal footing.
++//     Cost: one extra PPE_prep + 2 CUB reduces per logged step. tid==0 only
++//     (single-GPU; multi-GPU logs the GPU-0 subdomain max).
++#ifndef PPE_DIAG
++#define PPE_DIAG       1
++#endif
++#ifndef PPE_DIAG_FREQ
++#define PPE_DIAG_FREQ  10
++#endif
++///////////////////////////////////////////////////////
++
++//// Consistent-operator PPE (IISPH) ////
++// 0 = production Brookshaw PPE operator (A != div of applied force; inconsistent).
++// 1 = IISPH consistent operator: the matrix A is built as the divergence of the
++//     ACTUALLY-applied pressure force, so converging it is a true projection.
++//     Replaces PPE_prep/calc with KERNEL_iisph_prep + (pass1,pass2) relaxed-Jacobi
++//     sweeps, source = density error (rho_0 - rho*), and switches pressureforce3D
++//     to the matching symmetric form a_p = -sum_j m_j(p_i/rho_i^2 + p_j/rho_j^2)gradW
++//     (plain gradW, no KGC, so operator==force and A is symmetric). Iterated via the
++//     IMPLICIT_PPE loop; validate with PPE_DIAG resid_max (should drop & stay low).
++#ifndef CONSISTENT_PPE
++#define CONSISTENT_PPE   0
++#endif
++#ifndef IISPH_OMEGA
++#define IISPH_OMEGA      0.5f   // relaxed-Jacobi factor (Ihmsen 2014)
++#endif
++// Early-exit gate in DIVERGENCE units: stop once mean |rho*div(u^{n+1})/dt|
++// (= |residual|/dt^2, same quantity as div_un1) drops below IISPH_ETA. This is the
++// actual incompressibility, NOT density error — important because this solver holds
++// rho=rho0 (density never evolves), so a density-error gate is misleadingly loose.
++// Capped at maxIteration (solv). Logged to ./<CASE>/IISPH_log.txt.
++// 0.09 sits just above the relaxed-Jacobi floor (~0.08) so it early-exits in ~tens
++// of sweeps (vs 200 cap at 0.05), while still well below explicit (~0.16).
++#ifndef IISPH_ETA
++#define IISPH_ETA        0.09f
++#endif
++// Stagnation gate: also stop when the per-sweep RELATIVE residual drop falls below this,
++// i.e. the solver has hit THIS step's floor and further sweeps won't help. Without it, when
++// the developed-flow floor rises above IISPH_ETA the loop spins to maxIteration (200-cap)
++// even though it converged in ~30-50 sweeps. Convergence = (avg_err<IISPH_ETA) OR (rel_drop<this).
++#ifndef IISPH_STAG_TOL
++#define IISPH_STAG_TOL   1e-3f
++#endif
++// Every IISPH_CONV_FREQ steps, dump that step's per-iteration div curve (no early-exit
++// on those steps, run full maxIteration) to ./<CASE>/IISPH_conv.txt  (step, iter, avg_div).
++// 0 = disabled: every step uses the 0.09 early-exit (no full-200 conv steps -> faster).
++#ifndef IISPH_CONV_FREQ
++#define IISPH_CONV_FREQ  0
++#endif
++// KGC-consistent IISPH (smoke test): 0 = plain gradW (symmetric, stable, but solves the
++//   LESS-accurate plain divergence -> KGC-div stays ~0.27 > explicit). 1 = apply the SAME
++//   KGC correction (Cm_i) to gradW in EVERY IISPH term (prep G/H/D, pass1 d_ij, pass2 Ap)
++//   AND the applied pressure force, so the solver actually targets the accurate KGC
++//   divergence. RISK (see investigation summary section 2): KGC breaks gradW_ij=-gradW_ji
++//   -> operator loses symmetry/diagonal-dominance -> relaxed-Jacobi may blow up exactly
++//   like the Brookshaw attempt. This flag exists to TEST that: run a few hundred steps,
++//   watch bi_max. Requires CONSISTENT_PPE=1 and solv kgc=KGC.
++#ifndef IISPH_KGC
++#define IISPH_KGC        1
++#endif
++/////////////////////////////////////////
++
+ //// building (IBM) deactivation ////
+ // 0 = IBM building active (normal run).
+ // 1 = building-free run: KERNEL_deactivate_IBM sets i_type=3 on all
+@@ -132,12 +211,16 @@
+ //     (skipped as target and as neighbour). Interior fluid stays active
+ //     -> the former building volume becomes ordinary fluid.
+ //     Used for clean SGS-model (DDF vs SSM) buoyancy comparisons.
++#ifndef DEACTIVATE_IBM
+ #define DEACTIVATE_IBM 1
++#endif
+ /////////////////////////////////////
+ 
+ #define ncell_init 2
+ #define Cell_division_factor 4
++#ifndef IBM_length
+ #define IBM_length 1.0
++#endif
+ #define Pressure_length 1.0
+ #define XSPH_length 0.66667
+ 
+@@ -146,10 +229,18 @@
+ #define TOLERANCE 1e-5
+ #define k_vonKarman 0.4
+ #define Businger_const 16.0   // For MOST psi function
++#ifndef MOST_z0
+ #define MOST_z0 0.1            // Roughness length [m] (0.1=grassland, 1.0=urban)
++#endif
++#ifndef MOST_z0h
+ #define MOST_z0h 0.01          // Roughness length for heat [m]
++#endif
++#ifndef us_ini
+ #define us_ini 0.5             // Initial friction velocity [m/s]
++#endif
++#ifndef ABL_h
+ #define ABL_h 125.0            // ABL height [m]
++#endif
+ #define Pr_t 0.71             // Turbulent pr number
+ 
+ #define Solid_cp 900.0
+@@ -162,14 +253,20 @@
+ // 211 Unstable: T_con=315.0  (ΔT=+15K, L<0)
+ // 212 Neutral:  T_con=300.0  (ΔT=  0K, L→∞)
+ // 213 Stable:   T_con=285.0  (ΔT=-15K, L>0)
++#ifndef T_ini
+ #define T_ini 300.0       // Initial fluid temperature [K]
+-#define T_con 305       // Surface temperature [K]  ← DDF/SSM 부력 비교: 지표 330K, T_ini=300K 성층
++#endif
++#ifndef T_con
++#define T_con 300.0       // Surface temperature [K]  ← DDF/SSM 부력 비교: 지표 330K, T_ini=300K 성층
++#endif
+ #define T_start_t 0       // Start time [s]
+ #define T_con_t 0.0       // 0=즉시 T_con 적용
+ #define Pb 0.0
+ #define tempb 300.0       // Reference potential temperature [K]
+ 
++#ifndef Scalar_Diffusion_coeff
+ #define Scalar_Diffusion_coeff 0.01  // Scalar diffusion coefficient (m^2/s) — matched to LDM D=0.01
++#endif
+ 
+ // Deardorff SGS model constants
+ #define Ck_sgs 0.1
+@@ -190,18 +287,45 @@
+ #define k_ib_cy 0.0
+ #define k_ib_cz 0.0
+ 
+-#define MOST_boundary 0   // 1: MOST boundary condition 적용, 0: 적용 안함 (DDF/SSM 부력 비교: ON)
++#ifndef MOST_boundary
++#define MOST_boundary 0   // 1: MOST boundary condition 적용, 0: 적용 안함 (Kori: OFF)
++#endif
+ #define Rho_air 1.225
+ 
+ // Channel-flow validation (CASE_ID 1500): streamwise body force [m/s2]
+ // f_x = u_tau^2 / delta = 0.5^2 / 80 = 0.003125  (drives periodic channel)
++#ifndef CHANNEL_FX
+ #define CHANNEL_FX 0.003125
++#endif
++#ifndef CHANNEL_U0
+ #define CHANNEL_U0 10.0    // initial uniform streamwise velocity [m/s]
++#endif
++
++// Rayleigh damping (sponge) layer near the ceiling.
++//   γ(z) = SPONGE_GAMMA_MAX × ramp(z)²,  ramp = (z - Z_BOTTOM)/(z_top - Z_BOTTOM)
++//   uz   *= (1 - γ·dt)   [only uz is damped; ux/uy untouched to protect mean flow]
++//   z_top = k_z_max (domain ceiling)
++// Set SPONGE_GAMMA_MAX <= 0 to disable.
++#ifndef SPONGE_Z_BOTTOM
++#define SPONGE_Z_BOTTOM 90.0
++#endif
++#ifndef SPONGE_GAMMA_MAX
++#define SPONGE_GAMMA_MAX 0.2f    // [1/s], e-folding time = 10 s at the ceiling
++#endif
++// 1 → sponge also damps uy with the same γ(z). Only for cases with zero cross-stream mean wind.
++// Default 0 = previous behaviour (uz only).
++#ifndef SPONGE_DAMP_UY
++#define SPONGE_DAMP_UY 0
++#endif
+ 
+ #define SIZ 0.01
+ 
+-#define INPUT_CASE_NAME "CaseCS1"
+-#define OUTPUT_CASE_NAME "CaseCS1"
++#ifndef INPUT_CASE_NAME
++#define INPUT_CASE_NAME "Kori"
++#endif
++#ifndef OUTPUT_CASE_NAME
++#define OUTPUT_CASE_NAME "Kori_vy1"
++#endif
+ 
+ #define INPUT_SPH_PATH  "./input/" INPUT_CASE_NAME "/" INPUT_CASE_NAME ".txt"
+ #define INPUT_LDM_PATH  "./input/" INPUT_CASE_NAME "/" INPUT_CASE_NAME "_LDM.txt"
+@@ -212,8 +336,112 @@ __device__ float us_update = us_ini;
+ __device__ float OB_length_global = 1e6f;  // Obukhov length for LDM dry deposition [m], updated by MOST kernel
+ 
+ // Time-averaging (Eulerian SPH)
+-// Per-case override in case_config.cuh. 0.0 = average from start of run.
++//
++// Two paths to set the averaging-window start time:
++//   AVG_START_TIME == 0 (default) → quasi-steady auto-detect from Σ½|u|²
++//                                    time series (see QS_DETECT_* below)
++//   AVG_START_TIME >  0           → fixed time, bypass detection
+ #ifndef AVG_START_TIME
+-#define AVG_START_TIME 30.0
++#define AVG_START_TIME 0.0
++#endif
++// End of the averaging window.
++//   AVG_END_TIME == 0 → auto = (detected/fixed start) + AVG_WINDOW
++//   AVG_END_TIME >  0 → fixed absolute time
++//   AVG_WINDOW   <=0 → no end (accumulate to time_end, no freeze/dump)
++#ifndef AVG_END_TIME
++#define AVG_END_TIME 0.0
++#endif
++// Averaging window length added to the (detected/fixed) start to derive
++// the end time when AVG_END_TIME == 0.
++// ------------------------------------------------------------
++// 초기 횡류(y) 속도 [m/s] — Leipzig 계열(CASE_ID 1000~1100) 전역 초기조건.
++// 운동량 방정식에 y 방향 강제항이 없으므로(f_geo 는 x 전용) 솔버가 이 값을
++// 유지해주지 않는다. 순수한 초기조건일 뿐이며 기본값 0 = 횡류 없음.
++// 2026-09-10 이전 기본값은 -1.0 이었다.
++// ------------------------------------------------------------
++#ifndef INIT_CROSSFLOW_UY
++#define INIT_CROSSFLOW_UY 0.0
++#endif
++
++// ------------------------------------------------------------
++// VTK 출력 케이던스 [step]. 기본값은 종전 하드코딩과 동일.
++// 검증런처럼 전체장을 자주 봐야 할 때만 -D FULL_DUMP_EVERY=1000 식으로 낮춘다
++// (전체장 1개 = 43M 입자 x 6 필드 ~ 2.2 GB).
++// ------------------------------------------------------------
++#ifndef SLICE_DUMP_EVERY
++#define SLICE_DUMP_EVERY 100
++#endif
++#ifndef FULL_DUMP_EVERY
++#define FULL_DUMP_EVERY 10000
++#endif
++#ifndef VORT_DUMP_EVERY
++#define VORT_DUMP_EVERY 1000
++#endif
++
++#ifndef AVG_WINDOW
++#define AVG_WINDOW 30.0
++#endif
++
++// Quasi-steady detection (Σ½|u|² sliding-window relative std test).
++// Effective window = QS_DETECT_N × QS_SAMPLE_STRIDE × 50 simulation steps.
++//   QS_DETECT_N: ring-buffer size (# of samples kept)
++//   QS_SAMPLE_STRIDE: how many 50-step diagnostic blocks per sample push
++//   (default N=60, STRIDE=4 → 60 × 4 × 50 = 12000 steps = 60s at dt=0.005)
++#ifndef QS_DETECT_N
++#define QS_DETECT_N 60
++#endif
++#ifndef QS_SAMPLE_STRIDE
++#define QS_SAMPLE_STRIDE 4
++#endif
++#ifndef QS_DETECT_EPS
++#define QS_DETECT_EPS 0.01f       // relative std threshold (1 %)
++#endif
++// Minimum time below which QS auto-detect cannot latch. Prevents the
++// detector from firing on the initial ring-buffer fill window when the
++// flow has not yet developed. Set 0 to disable.
++#ifndef QS_MIN_TIME
++#define QS_MIN_TIME 49.0
++#endif
++// Fallback: if QS is not detected by this absolute time, force-latch
++// h_avg_start = time. Set <=0 to disable fallback.
++#ifndef AVG_FORCE_START_TIME
++#define AVG_FORCE_START_TIME 50.0
++#endif
++
++// Wall-clock-style stop: end the simulation this many seconds after the
++// averaging window starts (h_avg_start latched). Overrides time_end.
++// Set <=0 to disable (then time_end governs).
++#ifndef LDM_DURATION_AFTER_AVG
++#define LDM_DURATION_AFTER_AVG 0.0   // disabled: time_end governs (averaging off)
++#endif
++
++__device__ unsigned int avg_count = 0;  // # of accumulated samples (incremented by KERNEL_accumulate_avg)
++
++// Dynamic averaging window bounds, updated at runtime.
++//   avg_start_dyn = ∞ → not yet started (LDM dormant, no accumulation)
++//   avg_end_dyn   = ∞ → no freeze yet (or never, when AVG_WINDOW<=0)
++__device__ Real avg_start_dyn = (Real)1e30;
++__device__ Real avg_end_dyn   = (Real)1e30;
++
++// Mean-flow LDM mode.
++//   0 → 평소대로 SPH transient + LDM (Run A)
++//   1 → SPH 솔버 skip, MEAN_FIELD_PATH 로드해서 P1.ux/k_turb/e_turb를 frozen
++//        mean field로 채우고 LDM만 풀이 (Run B). AVG_START_TIME gate 우회.
++#ifndef LDM_MEAN_MODE
++#define LDM_MEAN_MODE 0
++#endif
++// Run B 가 다른 실험 디렉토리의 mean_field.bin 을 읽을 수 있도록 -D 오버라이드 허용.
++#ifndef MEAN_FIELD_PATH
++#define MEAN_FIELD_PATH "./" OUTPUT_CASE_NAME "/mean_field.bin"
++#endif
++
++// Checkpoint / restart (ISPH_Calc.cuh save_checkpoint / load_checkpoint).
++//   CKPT_EVERY > 0 → count%CKPT_EVERY==0 인 스텝 끝마다 CKPT_PATH 에 전체 상태 저장
++//                    (이전 파일은 CKPT_PATH.prev 로 한 벌 보관). 단일 GPU 전용.
++//   재개: 같은 바이너리를 환경변수 SOPHIA_RESTART=<체크포인트 경로> 로 실행.
++#ifndef CKPT_EVERY
++#define CKPT_EVERY 0
+ #endif
+-__device__ unsigned int avg_count = 0;  // # of accumulated samples (incremented by KERNEL_accumulate_avg)
+\ No newline at end of file
++#ifndef CKPT_PATH
++#define CKPT_PATH "./" OUTPUT_CASE_NAME "/restart.bin"
++#endif
+\ No newline at end of file
+diff --git a/SOPHIA_gpu.cu b/SOPHIA_gpu.cu
+index 2f7b1f4..41e279a 100644
+--- a/SOPHIA_gpu.cu
++++ b/SOPHIA_gpu.cu
+@@ -139,7 +139,7 @@ int main(int argc,char**argv)
+ 
+ 	ngpu=atoi(argv[1]);
+ 
+-	char fn[64],fn2[64];
++	char fn[256],fn2[256];
+ 	strcpy(fn,SOLV_SPH_PATH);
+ 	strcpy(fn2,"./input/data.txt");
+ 
+diff --git a/case_config.cuh b/case_config.cuh
+index 775a36a..d511188 100644
+--- a/case_config.cuh
++++ b/case_config.cuh
+@@ -5,7 +5,7 @@
+ // Case selector
+ // ============================================================
+ #ifndef CASE_ID
+-#define CASE_ID 501
++#define CASE_ID 1010
+ #endif
+ 
+ // ============================================================
+@@ -166,8 +166,8 @@
+ // ------------------------------------------------------------
+   #define L1  0.0
+   #define L2  3.5
+-  #define L3  2600.0
+-  #define L4  2600.0
++  #define L3  246.5
++  #define L4  251.0
+ 
+   #define L_left   -71.5
+   #define L_right   71.5
+@@ -206,14 +206,25 @@
+ // ------------------------------------------------------------  
+ #elif CASE_ID == 1002
+ 
++  // Leipzig_surface / Leipzig_surface_full particles span
++  //   x[0, 1315]  y[-657.5, 657.5]  z[-8.75, 371.25]   (527 x 527 x 146, dx=2.5)
++  // with h=3.75 and kappa=2, i.e. a kernel support radius of 7.5 m = 3 planes.
++  // Every buffer band below must contain real particles: the matching BC kernel
++  // early-returns on buffer_type, so an empty band leaves that face running as
++  // plain interior fluid with truncated support (2026-09-10: that is what pinned
++  // the x=1315 and y=+657.5 planes at the 20 m/s velocity limit).
+   #define L1  0.0
+-  #define L2  8.75
+-  #define L3  2200.0
+-  #define L4  2210.0
+-
+-  #define L_left   -678.75
+-  #define L_right   678.75
+-  #define L_ceiling 15463.75
++  #define L2  8.75      // inlet buffer   x < L2       : 4 planes, 0 ... 7.5
++  #define L3  1307.5    // outlet buffer  L3 <= x < L4 : 4 planes, 1307.5 ... 1315
++  #define L4  1317.5
++
++  // y-periodic: period = L_right - L_left = 1297.5 = 519 planes x 2.5, so the
++  // buffer planes +-650 ... +-657.5 map exactly onto interior planes -+640 ... -+647.5.
++  // KERNEL_periodic_boundary3D copies by exact position (tol 1e-3) and zeroes the
++  // particle when no image is found, so the period must stay an exact multiple of dx.
++  #define L_left   -648.75
++  #define L_right   648.75
++  #define L_ceiling 371.25
+ 
+   #define L_MOST_x0   0.0
+   #define L_MOST_xmax 1990.0
+@@ -276,8 +287,8 @@
+ 
+   #define L1  0.0
+   #define L2  17.5
+-  #define L3  3200.0
+-  #define L4  3210.0
++  #define L3  2855.0
++  #define L4  2865.0
+ 
+   #define L_left   -1272.5
+   #define L_right   1272.5
+@@ -286,6 +297,10 @@
+   #define L_MOST_x0   15.0
+   #define L_MOST_xmax 1990.0
+ 
++  // Kori는 건물(IBM)이 핵심 → IBM 활성화 보장
++  #undef  DEACTIVATE_IBM
++  #define DEACTIVATE_IBM 0
++
+ // ------------------------------------------------------------
+ // Scalar Transport test (dx=0.01m)
+ // ------------------------------------------------------------
+diff --git a/class_Cuda_Particle_Array.cuh b/class_Cuda_Particle_Array.cuh
+index baf31fb..9a07cd8 100644
+--- a/class_Cuda_Particle_Array.cuh
++++ b/class_Cuda_Particle_Array.cuh
+@@ -108,6 +108,12 @@ typedef struct particles_array_3{
+ 	// Real A[Correction_Matrix_Size][Correction_Matrix_Size];
+ 	Real inv_cm_xx,inv_cm_yy,inv_cm_zz;
+ 	Real inv_cm_xy,inv_cm_yz,inv_cm_zx;
++
++	// IISPH consistent-operator PPE (Parameters.cuh CONSISTENT_PPE). Per-step scratch:
++	Real dii_x,dii_y,dii_z;   // d_ii = -dt^2/rho_i^2 * sum_j m_j gradW_ij  (i's displacement / unit p_i)
++	Real dx_x,dx_y,dx_z;      // Delta x_i = d_ii*p_i + sum_j d_ij*p_j      (pressure displacement, per sweep)
++	Real iisph_aii;           // diagonal a_ii  (negative)
++	Real iisph_src;           // source s_i = rho_0 - rho*_i
+ }part3;
+ ///////////////////////////////////////////////////////////////////////////
+ typedef struct p2p_particles_array_3{
+diff --git a/functions_BC.cuh b/functions_BC.cuh
+index e2e0aea..452386d 100644
+--- a/functions_BC.cuh
++++ b/functions_BC.cuh
+@@ -243,7 +243,7 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
+ 		if(P1[i].p_type==-1){
+ 			P1[i].ux=tux/tflt_s;
+ 			P1[i].uy=tuy/tflt_s;
+-			P1[i].uz=tuz/tflt_s;
++			P1[i].uz=-tuz/tflt_s;
+ 		}
+ 		//if(P1[i].p_type==0) P1[i].pres=0.0;
+ 		if(P1[i].buffer_type==1 || P1[i].buffer_type==-1) P1[i].pres = pres_g+(xi-xgnode_i)*grad_px+(yi-ygnode_i)*grad_py+(zi-zgnode_i)*grad_pz;
+@@ -565,6 +565,79 @@ __global__ void KERNEL_donothing_buffer3D(int_t*g_str,int_t*g_end,part1*P1,part2
+ 	}
+ }
+ 
++// =======================================================================
++// Convective outflow BC (Orlanski 1976) for outlet buffer (buffer_type==2).
++//   ∂u/∂t + U_c · ∂u/∂x = 0   →   u^{n+1} = u^n - C·(u^n - u_inner)
++//   C = U_c · dt / dx   (clamped to [0,1])
++// u_inner = SPH-interpolated velocity over upstream (xj<xi) interior fluid.
++// Pressure is anchored to 0 to prevent accumulation. Temperature follows
++// the same convective rule.
++// =======================================================================
++__global__ void KERNEL_convective_outflow3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3,Real tdt)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(P1[i].buffer_type!=2) return;
++
++	Real xi=P1[i].x, yi=P1[i].y, zi=P1[i].z;
++	Real hi=P1[i].h, tmp_A=calc_tmpA(hi);
++	Real search_range=k_search_kappa*hi;
++
++	int_t icell,jcell,kcell;
++	if(k_x_max==k_x_min){icell=0;} else{icell=min(floor((xi-k_x_min)/k_dcell),k_NI-1);}
++	if(k_y_max==k_y_min){jcell=0;} else{jcell=min(floor((yi-k_y_min)/k_dcell),k_NJ-1);}
++	if(k_z_max==k_z_min){kcell=0;} else{kcell=min(floor((zi-k_z_min)/k_dcell),k_NK-1);}
++	if(icell<0)icell=0; if(jcell<0)jcell=0; if(kcell<0)kcell=0;
++
++	Real sumW=0, ux_in=0, uy_in=0, uz_in=0, T_in=0;
++	int_t ncell=P1[i].ncell;
++	for(int_t z=-ncell;z<=ncell;z++){
++		for(int_t y=-ncell;y<=ncell;y++){
++			for(int_t x=-ncell;x<=ncell;x++){
++				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
++				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
++				if(g_str[k]==cu_memset) continue;
++				int_t fend=g_end[k];
++				for(int_t j=g_str[k];j<fend;j++){
++					if(P1[j].buffer_type!=0) continue;     // interior only
++					if(P1[j].p_type!=1)      continue;     // fluid only
++					Real xj=P1[j].x;
++					if(xj>=xi) continue;                   // upstream of buffer
++					Real yj=P1[j].y, zj=P1[j].z;
++					Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
++					if(tdist>=search_range) continue;
++					Real W=calc_kernel_wij(tmp_A,hi,tdist);
++					Real volj=P1[j].m/P1[j].rho;
++					sumW  += volj*W;
++					ux_in += P1[j].ux  *volj*W;
++					uy_in += P1[j].uy  *volj*W;
++					uz_in += P1[j].uz  *volj*W;
++					T_in  += P1[j].temp*volj*W;
++				}
++			}
++		}
++	}
++
++	if(sumW<(Real)1e-12){
++		// no upstream neighbour found: anchor pressure only, leave velocity unchanged
++		P1[i].pres=0.0f;
++		return;
++	}
++	ux_in/=sumW; uy_in/=sumW; uz_in/=sumW; T_in/=sumW;
++
++	Real Uc = 10.0f;             // mean streamwise velocity (CaseCS1 inlet)
++	Real dx = k_dcell;
++	Real C  = Uc * tdt / dx;
++	if(C>1.0f) C=1.0f;
++	if(C<0.0f) C=0.0f;
++
++	P1[i].ux   = P1[i].ux   - C*(P1[i].ux   - ux_in);
++	P1[i].uy   = P1[i].uy   - C*(P1[i].uy   - uy_in);
++	P1[i].uz   = P1[i].uz   - C*(P1[i].uz   - uz_in);
++	P1[i].temp = P1[i].temp - C*(P1[i].temp - T_in);
++	P1[i].pres = 0.0f;
++}
++
+ __global__ void KERNEL_open_boundary_extrapolation_buffer3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
+ {
+ 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+@@ -1700,3 +1773,38 @@ __global__ void KERNEL_Recycling3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,par
+ 		return;
+ 	}
+ }
++
++// =======================================================================
++// Rayleigh damping (sponge) layer near the ceiling.
++//   γ(z) = SPONGE_GAMMA_MAX × ramp²,  ramp = (z - Z_BOTTOM)/(z_top - Z_BOTTOM)
++//   uz   *= max(0, 1 - γ·dt)   [ux left alone; uy too when SPONGE_DAMP_UY=1]
++// Absorbs grid-scale vertical oscillations / gravity waves trapped under a
++// reflective (freeslip) ceiling without distorting the streamwise mean flow.
++// =======================================================================
++__global__ void KERNEL_sponge_ceiling(part1* P1, Real tdt)
++{
++	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
++	if(i >= k_num_part2)               return;
++	if(P1[i].i_type > i_type_crt)      return;
++	if(P1[i].p_type != FLUID)          return;
++
++	Real zi = P1[i].z;
++	if(zi < (Real)SPONGE_Z_BOTTOM)     return;
++
++	Real z_top = k_z_max;
++	Real span  = z_top - (Real)SPONGE_Z_BOTTOM;
++	if(span <= (Real)0.0)              return;
++
++	Real ramp = (zi - (Real)SPONGE_Z_BOTTOM) / span;
++	if(ramp < (Real)0.0) ramp = (Real)0.0;
++	if(ramp > (Real)1.0) ramp = (Real)1.0;
++
++	Real gamma  = (Real)SPONGE_GAMMA_MAX * ramp * ramp;
++	Real damp   = (Real)1.0 - gamma * tdt;
++	if(damp < (Real)0.0) damp = (Real)0.0;
++
++	P1[i].uz *= damp;
++	// Cross-stream mean is zero in these cases (INIT_CROSSFLOW_UY=0), so damping uy toward 0
++	// removes the ceiling shear mode that survives uz-only damping (2026-09-15, t=120~130 s).
++	if(SPONGE_DAMP_UY) P1[i].uy *= damp;
++}
+diff --git a/functions_LDM.cuh b/functions_LDM.cuh
+index 9495614..beb8ee0 100644
+--- a/functions_LDM.cuh
++++ b/functions_LDM.cuh
+@@ -25,7 +25,7 @@ __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real
+ 	// 	}
+ 	// }
+ 
+-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
++	if(ttime >= LP1[i].t_release){
+ 		LP1[i].i_type=1;
+ 	}
+ }
+@@ -36,7 +36,7 @@ __global__ void particle_releasing_Dispersion_Gaussian(Real tdt,int freq,Real tt
+ 	if(i>=k_num_part_LDM) return;
+ 	if(LP1[i].i_type==1) return;
+ 
+-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
++	if(ttime >= LP1[i].t_release){
+ 		LP1[i].i_type=1;
+ 
+ 		// RNG 초기화
+@@ -77,7 +77,7 @@ __global__ void particle_releasing_Dispersion_Kernel(Real tdt,int freq,Real ttim
+ 	if(i>=k_num_part_LDM) return;
+ 	if(LP1[i].i_type==1) return;
+ 
+-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
++	if(ttime >= LP1[i].t_release){
+ 		LP1[i].i_type=1;
+ 
+ 		// RNG 초기화
+@@ -528,6 +528,11 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
+ 
+ 	Real tmp_flt=0.0;
+ 
++	// IBM (building) no-penetration: live color-gradient surface normal + nearest distance
++	Real gnx=0.0, gny=0.0, gnz=0.0;   // outward normal (from building toward particle)
++	Real solid_w=0.0;                 // accumulated IBM kernel weight (proximity measure)
++	Real near_d=(Real)1e20;           // nearest IBM particle distance
++
+ 	tx0=LP2[i].x0;														// x-directional initial position
+ 	ty0=LP2[i].y0;														// x-directional initial position
+ 	tz0=LP2[i].z0;														// x-directional initial position
+@@ -614,6 +619,24 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
+ 								tmp_flt += (mj/rhoj)*twij;
+ 							}
+ 						}
++						else if(P1[j].p_type>=1000){   // IBM building: build color-gradient normal
++							xj=P1[j].x;
++							yj=P1[j].y;
++							zj=P1[j].z;
++							hj=P1[j].h;
++
++							search_range=k_search_kappa*fmax(hi,hj);
++							tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
++
++							if(tdist<search_range){
++								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
++								gnx+=(xi-xj)/tdist*twij;   // outward (away from building surface)
++								gny+=(yi-yj)/tdist*twij;
++								gnz+=(zi-zj)/tdist*twij;
++								solid_w+=twij;
++								if(tdist<near_d) near_d=tdist;
++							}
++						}
+ 					}
+ 				}
+ 			}
+@@ -682,14 +705,39 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
+ 	yc=ty0+(ywind+uyc)*(t_dt);												// correct Y-directional position
+ 	zc=tz0+(zwind+uzc)*(t_dt);
+ 
++	// ------------------------------------------------------------------
++	// Building (IBM) no-penetration: specular reflection off the live
++	// color-gradient surface normal (per-particle IBM normals are
++	// unreliable for multi-building geometry, so rebuild it here).
++	// Reflect the displacement (and stored turbulent velocity) only when
++	// the particle is within ~half a spacing of the wall AND moving inward.
++	// ------------------------------------------------------------------
++	if(solid_w>1e-12){
++		Real nmag=sqrt(gnx*gnx+gny*gny+gnz*gnz)+1e-20;
++		Real nxh=gnx/nmag, nyh=gny/nmag, nzh=gnz/nmag;     // outward normal
++		Real dpx=xc-tx0, dpy=yc-ty0, dpz=zc-tz0;           // this-step displacement
++		Real dn=dpx*nxh+dpy*nyh+dpz*nzh;                   // along outward normal
++		Real dx_sp=hi/(Real)h_coeff;                       // particle spacing
++		if(near_d < (Real)0.5*dx_sp && dn < (Real)0.0){    // near wall & moving inward
++			xc=tx0+(dpx-(Real)2.0*dn*nxh);                 // reflect displacement (specular)
++			yc=ty0+(dpy-(Real)2.0*dn*nyh);
++			zc=tz0+(dpz-(Real)2.0*dn*nzh);
++			Real un=uxc*nxh+uyc*nyh+uzc*nzh;               // reflect stored velocity
++			uxc-=(Real)2.0*un*nxh;
++			uyc-=(Real)2.0*un*nyh;
++			uzc-=(Real)2.0*un*nzh;
++		}
++	}
++
+ 	// Ground reflection (z <= L1)
+ 	if(zc <= (Real)L1){
+ 		zc = (Real)(2.0*L1) - zc;
+ 		uzc = -uzc;
+ 	}
+-	// Ceiling reflection (z >= L3)
+-	if(zc >= (Real)L3){
+-		zc = (Real)(2.0*L3) - zc;
++	// Ceiling reflection (z >= L_ceiling).  L3 is the streamwise outlet coordinate,
++	// not a height -- comparing zc against it disabled ceiling reflection entirely.
++	if(zc >= (Real)L_ceiling){
++		zc = (Real)(2.0*L_ceiling) - zc;
+ 		uzc = -uzc;
+ 	}
+ 
+diff --git a/functions_NNPS.cuh b/functions_NNPS.cuh
+index 7964b8b..1a97a60 100644
+--- a/functions_NNPS.cuh
++++ b/functions_NNPS.cuh
+@@ -62,6 +62,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
+ 		if(CASE_ID>1000 && CASE_ID<1100) {
+ 			HP1[i].ux=Interpolate_ux_ABL(HP1[i].z);
+ 			//HP1[i].ux=1.5*Interpolate_ux_caseA(HP1[i].z,0.08);
++			HP1[i].uy=(Real)INIT_CROSSFLOW_UY;   // global cross-flow initial velocity (0 = none)
+ 			HP1[i].k_turb=0.0;
+ 		}
+ 		if(CASE_ID==2001) HP1[i].ux=0.0;	// Scalar transport test
+@@ -104,7 +105,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
+ 			HP1[i].uy = 0.0;
+ 			HP1[i].uz = 0.0;
+ 		}
+-
++		
+ 
+ 		// // Inner building particle ux=0.0
+ 		// if(HP1[i].p_type==1 && zi<0.2){
+@@ -199,6 +200,14 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
+ 				// }
+ 			}
+ 		}
++
++		if(CASE_ID==501){
++			if(HP1[i].z>110 && HP1[i].buffer_type==0){
++				HP1[i].p_type=-1;
++			}
++		}
++
++		
+ 		DHP1[c_count]=HP1[i];
+ 		c_count++;
+ 	}
+diff --git a/functions_PPE.cuh b/functions_PPE.cuh
+index 06a9b0d..0f0dcae 100644
+--- a/functions_PPE.cuh
++++ b/functions_PPE.cuh
+@@ -1,4 +1,7 @@
+-__global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
++// g_bi (optional, may be NULL): per-particle |bi| = |rho*div(u*)/dt|, the PPE
++// source magnitude. Written only for fluid particles; caller must zero it first
++// (skipped particles early-return). Used by the PPE_DIAG residual diagnostic.
++__global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3, Real* g_bi)
+ {
+ 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+ 	if(i>=k_num_part2) return;
+@@ -158,6 +161,8 @@ __global__ void KERNEL_PPE_prep3D(Real tdt, int_t*g_str,int_t*g_end,part1*P1,par
+ 
+ 	bi = weight*(bix+biy+biz)/tdt;
+ 
++	if(g_bi!=NULL) g_bi[i]=fabsf(bi);   // PPE source magnitude for PPE_DIAG (|rho*div(u*)/dt|)
++
+ 	// bi = -rhoi*(1.0-drhostar/flt)/tdt/tdt;
+ 	//P1[i].PPE1 = rhoi*(bix+biy+biz)/tdt;
+ 	//P1[i].PPE2 = -rhoi*(1.0-drhostar/flt)/tdt/tdt;  // YHS
+@@ -186,6 +191,264 @@ __global__ void KERNEL_PPE_calc3D(part1*P1)
+ 	P1[i].pres=(P1[i].PPE1)/(P1[i].PPE2+1e-20);
+ }
+ 
++// True PPE residual per particle: |A*p - b| = |PPE2*pres - PPE1|  (~ |div(u^{n+1})|).
++// MUST be called after a fresh KERNEL_PPE_prep3D evaluated with the post-solve
++// pressure; otherwise pres = PPE1/PPE2 straight from PPE_calc makes this identically 0.
++// resid must be zeroed by the caller (non-fluid particles early-return).
++__global__ void KERNEL_compute_ppe_residual(part1*P1, Real* resid)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(P1[i].i_type>i_type_crt) return;
++	if(P1[i].p_type>=1000)	return;		// Immersed Boundary Method
++	if(P1[i].p_type<=0)	return;
++	if(P1[i].buffer_type==99)	return;	// Interior fluid (inside building)
++
++	resid[i]=fabsf(P1[i].PPE2*P1[i].pres - P1[i].PPE1);
++}
++
++// Snapshot current pressure into pres_old (so the first Jacobi delta is well-defined).
++__global__ void KERNEL_snapshot_pres(part1*P1, Real* pres_old)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	pres_old[i]=P1[i].pres;
++}
++
++// Per-particle Jacobi delta |p_new - p_old| (early-exit gate), then snapshot p_new -> pres_old
++// for the next sweep. Non-fluid particles get delta=0 so they don't pollute the Max reduce.
++__global__ void KERNEL_compute_pres_delta(part1*P1, Real* pres_old, Real* pres_delta)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++
++	Real pnew=P1[i].pres;
++	bool is_fluid = !(P1[i].i_type>i_type_crt || P1[i].p_type>=1000 || P1[i].p_type<=0 || P1[i].buffer_type==99);
++	pres_delta[i] = is_fluid ? fabsf(pnew - pres_old[i]) : 0.0f;
++	pres_old[i]=pnew;   // snapshot for next iteration
++}
++
++//=================================================================================================
++// IISPH consistent-operator PPE (Parameters.cuh CONSISTENT_PPE). Plain gradW (no KGC) so the
++// matrix A == divergence of the applied symmetric pressure force a_p=-sum m_j(p_i/rho_i^2+p_j/rho_j^2)gradW.
++//   prep  : G_i=sum m_j gradW, H_i=sum m_j|gradW|^2, D_i=sum m_j (v_i-v_j).gradW
++//           -> d_ii=-dt^2/rho_i^2 G_i,  a_ii=-dt^2/rho_i^2(|G_i|^2+m_i H_i),  s_i=rho0-(rho_i+dt D_i)
++//   pass1 : Delta x_i = d_ii p_i + sum_j d_ij p_j,  d_ij=-dt^2 m_j/rho_j^2 gradW_ij
++//   pass2 : Ap_i = sum_j m_j (dx_i-dx_j).gradW_ij ;  p_i += (omega/a_ii)(s_i-Ap_i), clamp >=0
++//=================================================================================================
++#define IISPH_NEI_BOILERPLATE \
++	int_t icell,jcell,kcell; \
++	if((k_x_max==k_x_min)){icell=0;}else{icell=min(floor((xi-k_x_min)/k_dcell),k_NI-1);} \
++	if((k_y_max==k_y_min)){jcell=0;}else{jcell=min(floor((yi-k_y_min)/k_dcell),k_NJ-1);} \
++	if((k_z_max==k_z_min)){kcell=0;}else{kcell=min(floor((zi-k_z_min)/k_dcell),k_NK-1);} \
++	if(icell<0) icell=0; if(jcell<0) jcell=0; if(kcell<0) kcell=0;
++
++__global__ void KERNEL_iisph_prep(Real tdt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(P1[i].i_type>i_type_crt) return;
++	if(P1[i].p_type>=1000) return;
++	if(P1[i].p_type<=0) return;
++	if(P1[i].buffer_type==99) return;
++
++	Real xi=P1[i].x, yi=P1[i].y, zi=P1[i].z;
++	Real uxi=P1[i].ux, uyi=P1[i].uy, uzi=P1[i].uz;
++	Real rhoi=P1[i].rho, mi=P1[i].m;
++	Real hi=Pressure_length*P1[i].h, tmp_A=calc_tmpA(hi);
++	Real search_range=k_search_kappa*hi;
++
++	Real Gx=0,Gy=0,Gz=0,H=0,D=0;
++	IISPH_NEI_BOILERPLATE
++	int_t ncell=P1[i].ncell;
++	for(int_t z=-ncell;z<=ncell;z++) for(int_t y=-ncell;y<=ncell;y++) for(int_t x=-ncell;x<=ncell;x++){
++		if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
++		int_t k=idx_cell(icell+x,jcell+y,kcell+z);
++		if(g_str[k]==cu_memset) continue;
++		int_t fend=g_end[k];
++		for(int_t j=g_str[k];j<fend;j++){
++			if(P1[j].i_type==4) continue;
++			if(P1[j].p_type>=1000||P1[j].buffer_type==99) continue;
++			Real xj=P1[j].x,yj=P1[j].y,zj=P1[j].z,hj=P1[j].h;
++			Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
++			Real sr=k_search_kappa*fmax(hi,hj);
++			if(tdist>=sr) continue;
++			Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
++			Real tdwx=tdwij*(xi-xj)/tdist, tdwy=tdwij*(yi-yj)/tdist, tdwz=tdwij*(zi-zj)/tdist;
++#if IISPH_KGC
++			apply_gradient_correction_3D(P3[i].Cm,0.0f,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
++#endif
++			Real mj=P1[j].m;
++			Gx+=mj*tdwx; Gy+=mj*tdwy; Gz+=mj*tdwz;
++			H +=mj*(tdwx*tdwx+tdwy*tdwy+tdwz*tdwz);
++			D +=mj*((uxi-P1[j].ux)*tdwx+(uyi-P1[j].uy)*tdwy+(uzi-P1[j].uz)*tdwz);
++		}
++	}
++	Real dt2=tdt*tdt, inv_r2=1.0f/(rhoi*rhoi);
++	P3[i].dii_x=-dt2*inv_r2*Gx; P3[i].dii_y=-dt2*inv_r2*Gy; P3[i].dii_z=-dt2*inv_r2*Gz;
++	P3[i].iisph_aii=-dt2*inv_r2*(Gx*Gx+Gy*Gy+Gz*Gz + mi*H);
++	Real rho0=P2[i].rho_ref;
++	P3[i].iisph_src=(rho0-rhoi)-tdt*D;     // s_i = rho0 - rho*_i
++}
++
++__global__ void KERNEL_iisph_pass1(Real tdt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(P1[i].i_type>i_type_crt) return;
++	if(P1[i].p_type>=1000) return;
++	if(P1[i].p_type<=0) return;
++	if(P1[i].buffer_type==99) return;
++
++	Real xi=P1[i].x, yi=P1[i].y, zi=P1[i].z;
++	Real pi=P1[i].pres;
++	Real hi=Pressure_length*P1[i].h, tmp_A=calc_tmpA(hi);
++	Real search_range=k_search_kappa*hi;
++	Real dt2=tdt*tdt;
++
++	Real axx=0,axy=0,axz=0;   // sum_j d_ij p_j
++	IISPH_NEI_BOILERPLATE
++	int_t ncell=P1[i].ncell;
++	for(int_t z=-ncell;z<=ncell;z++) for(int_t y=-ncell;y<=ncell;y++) for(int_t x=-ncell;x<=ncell;x++){
++		if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
++		int_t k=idx_cell(icell+x,jcell+y,kcell+z);
++		if(g_str[k]==cu_memset) continue;
++		int_t fend=g_end[k];
++		for(int_t j=g_str[k];j<fend;j++){
++			if(P1[j].i_type==4) continue;
++			if(P1[j].p_type>=1000||P1[j].buffer_type==99) continue;
++			Real xj=P1[j].x,yj=P1[j].y,zj=P1[j].z,hj=P1[j].h;
++			Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
++			Real sr=k_search_kappa*fmax(hi,hj);
++			if(tdist>=sr) continue;
++			Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
++			Real tdwx=tdwij*(xi-xj)/tdist, tdwy=tdwij*(yi-yj)/tdist, tdwz=tdwij*(zi-zj)/tdist;
++#if IISPH_KGC
++			apply_gradient_correction_3D(P3[i].Cm,0.0f,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
++#endif
++			Real rhoj=P1[j].rho, mj=P1[j].m, pj=P1[j].pres;
++			Real dij=-dt2*mj/(rhoj*rhoj)*pj;   // d_ij . (unit) * pj
++			axx+=dij*tdwx; axy+=dij*tdwy; axz+=dij*tdwz;
++		}
++	}
++	P3[i].dx_x=P3[i].dii_x*pi+axx;
++	P3[i].dx_y=P3[i].dii_y*pi+axy;
++	P3[i].dx_z=P3[i].dii_z*pi+axz;
++}
++
++// resid (optional): per-particle density residual |s_i - Ap_i| for the early-exit
++// convergence check (avg over fluid = post-projection density error). Caller zeroes it.
++__global__ void KERNEL_iisph_pass2(Real tdt,int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3, Real* resid)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(P1[i].i_type>i_type_crt) return;
++	if(P1[i].p_type>=1000) return;
++	if(P1[i].p_type<=0) return;
++	if(P1[i].buffer_type==99) return;
++
++	Real xi=P1[i].x, yi=P1[i].y, zi=P1[i].z;
++	Real dxi_x=P3[i].dx_x, dxi_y=P3[i].dx_y, dxi_z=P3[i].dx_z;
++	Real hi=Pressure_length*P1[i].h, tmp_A=calc_tmpA(hi);
++	Real search_range=k_search_kappa*hi;
++
++	Real Ap=0;   // sum_j m_j (dx_i - dx_j).gradW_ij
++	IISPH_NEI_BOILERPLATE
++	int_t ncell=P1[i].ncell;
++	for(int_t z=-ncell;z<=ncell;z++) for(int_t y=-ncell;y<=ncell;y++) for(int_t x=-ncell;x<=ncell;x++){
++		if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
++		int_t k=idx_cell(icell+x,jcell+y,kcell+z);
++		if(g_str[k]==cu_memset) continue;
++		int_t fend=g_end[k];
++		for(int_t j=g_str[k];j<fend;j++){
++			if(P1[j].i_type==4) continue;
++			if(P1[j].p_type>=1000||P1[j].buffer_type==99) continue;
++			Real xj=P1[j].x,yj=P1[j].y,zj=P1[j].z,hj=P1[j].h;
++			Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
++			Real sr=k_search_kappa*fmax(hi,hj);
++			if(tdist>=sr) continue;
++			Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
++			Real tdwx=tdwij*(xi-xj)/tdist, tdwy=tdwij*(yi-yj)/tdist, tdwz=tdwij*(zi-zj)/tdist;
++#if IISPH_KGC
++			apply_gradient_correction_3D(P3[i].Cm,0.0f,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
++#endif
++			Real mj=P1[j].m;
++			Ap+=mj*((dxi_x-P3[j].dx_x)*tdwx+(dxi_y-P3[j].dx_y)*tdwy+(dxi_z-P3[j].dx_z)*tdwz);
++		}
++	}
++	Real src=P3[i].iisph_src;
++	if(resid!=NULL) resid[i]=fabsf(src-Ap);   // density residual of the current iterate
++	Real aii=P3[i].iisph_aii;
++	if(fabsf(aii)<1e-20f) return;          // isolated particle: leave pressure unchanged
++	Real pnew=P1[i].pres+IISPH_OMEGA/aii*(src-Ap);
++	P1[i].pres=fmaxf(pnew,0.0f);           // clamp negative pressure (IISPH)
++}
++
++// Divergence of the CORRECTED velocity u^{n+1}: out[i] = |rho*div(u^{n+1})/dt|.
++// Same operator/units as bi in KERNEL_PPE_prep3D (KGC-corrected gradient) so it is
++// directly comparable to bi_max. Geometry/rho/m read from Pg (=dev_SP1, fully valid),
++// velocity from Pv (=dev_P1, holds u^{n+1} after the corrector). Caller zeroes out[].
++// use_kgc: 1 = KGC-corrected gradient (matches explicit's PPE operator), 0 = plain gradW
++// (matches the IISPH operator). Lets each run be graded on its own divergence operator.
++__global__ void KERNEL_compute_div_un1(Real tdt,int_t*g_str,int_t*g_end,part1*Pg,part1*Pv,part2*P2,part3*P3,Real* out,int use_kgc)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	if(Pg[i].i_type>i_type_crt) return;
++	if(Pg[i].p_type>=1000) return;
++	if(Pg[i].p_type<=0) return;
++	if(Pg[i].buffer_type==99) return;
++
++	Real xi=Pg[i].x, yi=Pg[i].y, zi=Pg[i].z;
++	Real uxi=Pv[i].ux, uyi=Pv[i].uy, uzi=Pv[i].uz;     // corrected velocity u^{n+1}
++	Real rhoi=Pg[i].rho;
++	Real hi=Pressure_length*Pg[i].h, tmp_A=calc_tmpA(hi);
++	Real search_range=k_search_kappa*hi;
++	Real gc11=P3[i].inv_cm_xx, gc12=P3[i].inv_cm_xy, gc22=P3[i].inv_cm_yy,
++	     gc23=P3[i].inv_cm_yz, gc31=P3[i].inv_cm_zx, gc33=P3[i].inv_cm_zz;
++
++	Real bix=0,biy=0,biz=0;
++	IISPH_NEI_BOILERPLATE
++	int_t ncell=Pg[i].ncell;
++	for(int_t z=-ncell;z<=ncell;z++) for(int_t y=-ncell;y<=ncell;y++) for(int_t x=-ncell;x<=ncell;x++){
++		if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
++		int_t k=idx_cell(icell+x,jcell+y,kcell+z);
++		if(g_str[k]==cu_memset) continue;
++		int_t fend=g_end[k];
++		for(int_t j=g_str[k];j<fend;j++){
++			if(Pg[j].i_type==4) continue;
++			if(Pg[j].p_type>=1000||Pg[j].buffer_type==99) continue;
++			Real xj=Pg[j].x,yj=Pg[j].y,zj=Pg[j].z,hj=Pg[j].h;
++			Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
++			Real sr=k_search_kappa*fmax(hi,hj);
++			if(tdist>=sr) continue;
++			Real tdwij=calc_kernel_dwij(tmp_A,hi,tdist);
++			Real tdwx=tdwij*(xi-xj)/tdist, tdwy=tdwij*(yi-yj)/tdist, tdwz=tdwij*(zi-zj)/tdist;
++			Real gx=tdwx, gy=tdwy, gz=tdwz;            // plain gradW (IISPH operator)
++			if(use_kgc){                               // KGC-corrected (explicit operator)
++				gx=gc11*tdwx+gc12*tdwy+gc31*tdwz;
++				gy=gc12*tdwx+gc22*tdwy+gc23*tdwz;
++				gz=gc31*tdwx+gc23*tdwy+gc33*tdwz;
++			}
++			Real mj=Pg[j].m, rhoj=Pg[j].rho;
++			Real w=2.0*rhoi*rhoj/(rhoi+rhoj);
++			bix += mj/rhoj*(Pv[j].ux-uxi)*gx*w;
++			biy += mj/rhoj*(Pv[j].uy-uyi)*gy*w;
++			biz += mj/rhoj*(Pv[j].uz-uzi)*gz*w;
++		}
++	}
++	out[i]=fabsf((bix+biy+biz)/tdt);
++}
++
++// Fluid-particle indicator (1.0 fluid / 0.0 else) for averaging counts. Caller zeroes mask[].
++__global__ void KERNEL_fluid_mask(part1*P1, Real* mask)
++{
++	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
++	if(i>=k_num_part2) return;
++	bool fl = !(P1[i].i_type>i_type_crt || P1[i].p_type>=1000 || P1[i].p_type<=0 || P1[i].buffer_type==99);
++	mask[i]= fl?1.0f:0.0f;
++}
++
+ __global__ void KERNEL_pressure_synchronize(part1*P1,part1*TP1)
+ {
+ 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+@@ -692,8 +955,11 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
+ 								tdwy=tdwij*(yi-yj)/tdist;
+ 								tdwz=tdwij*(zi-zj)/tdist;
+ 
+-								// Gradient correction 적용
++								// Gradient correction 적용 (CONSISTENT_PPE: skip KGC -> plain gradW so force==IISPH operator).
++								// IISPH_KGC overrides: re-apply KGC so force==KGC-IISPH operator (targets accurate div).
++#if !CONSISTENT_PPE || IISPH_KGC
+ 								apply_gradient_correction_3D(P3[i].Cm,twij,tdwx,tdwy,tdwz,&tdwx,&tdwy,&tdwz);
++#endif
+ 								// 위 함수 형태를 밖으로 꺼내면
+ 								// Real tdwxc=tdwx*P3[i].Cm[0][0]+tdwy*P3[i].Cm[0][1]+tdwz*P3[i].Cm[0][2];
+ 								// Real tdwyc=tdwx*P3[i].Cm[1][0]+tdwy*P3[i].Cm[1][1]+tdwz*P3[i].Cm[1][2];
+@@ -718,8 +984,14 @@ __global__ void KERNEL_pressureforce3D(int_t inout,int_t*g_str,int_t*g_end,part1
+ 									// Real C_p=-mj*(pi+pj)/(rhoi*rhoj);      // Standard Monaghan
+ 									// Real C_p=-2.0*mj/(rhoi*rhoj)*((pi+Pb)*rhoj+(pj+Pb)*rhoi)/(rhoi+rhoj);      // Monaghan variation
+                 					// Real C_p=-mj*(pj-pi)/(rhoi*rhoj)-mj*(2.0*p_stab)/(rhoi*rhoj)*(ptypei==ptypej);     // Pressure stabilization(KDH)
++#if CONSISTENT_PPE
++									// IISPH-matching symmetric form: a_p=-sum m_j(p_i/rho_i^2+p_j/rho_j^2)gradW.
++									// This is exactly the force whose divergence is the IISPH operator A.
++									Real C_p=-mj*(pi/(rhoi*rhoi)+pj/(rhoj*rhoj));
++#else
+ 									Real C_p=-2.0*mj/(rhoi*rhoj)*(pi*rhoj+pj*rhoi)/(rhoi+rhoj);      // Origianl (KDH, 251226)
+ 									// Real C_p = -mj / rhoj * (pj - pi);
++#endif
+ 									tmpx+=C_p*tdwx;
+ 									tmpy+=C_p*tdwy;
+ 									tmpz+=C_p*tdwz;
+diff --git a/functions_TIME_ISPH.cuh b/functions_TIME_ISPH.cuh
+index e586841..f2079bb 100644
+--- a/functions_TIME_ISPH.cuh
++++ b/functions_TIME_ISPH.cuh
+@@ -459,3 +459,139 @@ __global__ void KERNEL_accumulate_avg(part1* P1)
+ 	P1[i].k_turb_avg += P1[i].k_turb;
+ 	P1[i].e_turb_avg += P1[i].e_turb;
+ }
++
++// =======================================================================
++// Mean-field I/O for two-run transient-vs-mean LDM comparison.
++//   Run A (LDM_MEAN_MODE=0): at time = AVG_END_TIME, save_mean_field dumps a
++//     one-shot binary snapshot of <ux,uy,uz,k_turb,e_turb> averaged over
++//     [AVG_START_TIME, AVG_END_TIME], keyed by particle index.
++//   Run B (LDM_MEAN_MODE=1): at startup, load_mean_field reads the snapshot
++//     and overwrites dev_P1.ux/uy/uz/k_turb/e_turb so LDM advects on the
++//     frozen mean. SPH solver calls are skipped in ISPH_Calc.cuh.
++// File layout: [mean_field_header][mean_field_record × n_part2]
++// =======================================================================
++typedef struct mean_field_record {
++	float ux, uy, uz;
++	float k_turb, e_turb;
++} mean_field_record;
++
++typedef struct mean_field_header {
++	char         magic[16];           // "SOPHIA_MEAN_v1"
++	int          n_part2;
++	unsigned int avg_count_at_dump;
++	float        us_update;
++	float        OB_length_global;
++	int          pad[4];              // reserved
++} mean_field_header;
++
++__global__ void KERNEL_apply_mean_field(part1* P1, const mean_field_record* mean)
++{
++	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
++	if(i >= k_num_part2) return;
++	P1[i].ux     = mean[i].ux;
++	P1[i].uy     = mean[i].uy;
++	P1[i].uz     = mean[i].uz;
++	P1[i].k_turb = mean[i].k_turb;
++	P1[i].e_turb = mean[i].e_turb;
++}
++
++// file_P1 is a host buffer already copied from dev_P1 by the caller.
++static void save_mean_field(const part1* file_P1, int n_part2_in, const char* path)
++{
++	unsigned int h_avg_count = 0;
++	cudaMemcpyFromSymbol(&h_avg_count, avg_count, sizeof(unsigned int));
++	if(h_avg_count == 0u){
++		printf("[mean] save_mean_field skipped: avg_count == 0\n");
++		return;
++	}
++	float h_us = 0.0f, h_OB = 0.0f;
++	cudaMemcpyFromSymbol(&h_us, us_update,        sizeof(float));
++	cudaMemcpyFromSymbol(&h_OB, OB_length_global, sizeof(float));
++
++	FILE* fp = fopen(path, "wb");
++	if(!fp){
++		printf("[mean] save_mean_field: cannot open %s for write\n", path);
++		return;
++	}
++
++	mean_field_header hdr;
++	memset(&hdr, 0, sizeof(hdr));
++	memcpy(hdr.magic, "SOPHIA_MEAN_v1", 14);
++	hdr.n_part2           = n_part2_in;
++	hdr.avg_count_at_dump = h_avg_count;
++	hdr.us_update         = h_us;
++	hdr.OB_length_global  = h_OB;
++	fwrite(&hdr, sizeof(hdr), 1, fp);
++
++	Real inv_n = (Real)1.0 / (Real)h_avg_count;
++	for(int i = 0; i < n_part2_in; i++){
++		mean_field_record rec;
++		rec.ux     = (float)(file_P1[i].ux_avg     * inv_n);
++		rec.uy     = (float)(file_P1[i].uy_avg     * inv_n);
++		rec.uz     = (float)(file_P1[i].uz_avg     * inv_n);
++		rec.k_turb = (float)(file_P1[i].k_turb_avg * inv_n);
++		rec.e_turb = (float)(file_P1[i].e_turb_avg * inv_n);
++		fwrite(&rec, sizeof(rec), 1, fp);
++	}
++	fclose(fp);
++	printf("[mean] saved %d records, avg_count=%u, us=%.4f, OB=%.4e -> %s\n",
++	       n_part2_in, h_avg_count, h_us, h_OB, path);
++}
++
++static int load_mean_field(part1* dev_P1, int n_part2_in, const char* path)
++{
++	FILE* fp = fopen(path, "rb");
++	if(!fp){
++		printf("[mean] load_mean_field: cannot open %s\n", path);
++		return 0;
++	}
++	mean_field_header hdr;
++	if(fread(&hdr, sizeof(hdr), 1, fp) != 1){
++		printf("[mean] load_mean_field: header read failed\n");
++		fclose(fp);
++		return 0;
++	}
++	if(memcmp(hdr.magic, "SOPHIA_MEAN_v1", 14) != 0){
++		printf("[mean] load_mean_field: bad magic in %s\n", path);
++		fclose(fp);
++		return 0;
++	}
++	if(hdr.n_part2 != n_part2_in){
++		printf("[mean] load_mean_field: n_part2 mismatch (file=%d, runtime=%d)\n",
++		       hdr.n_part2, n_part2_in);
++		fclose(fp);
++		return 0;
++	}
++
++	mean_field_record* host_rec =
++		(mean_field_record*)malloc(sizeof(mean_field_record) * (size_t)n_part2_in);
++	size_t nread = fread(host_rec, sizeof(mean_field_record), (size_t)n_part2_in, fp);
++	fclose(fp);
++	if((int)nread != n_part2_in){
++		printf("[mean] load_mean_field: record read short (%zu / %d)\n",
++		       nread, n_part2_in);
++		free(host_rec);
++		return 0;
++	}
++
++	mean_field_record* dev_rec = NULL;
++	cudaMalloc((void**)&dev_rec, sizeof(mean_field_record) * (size_t)n_part2_in);
++	cudaMemcpy(dev_rec, host_rec,
++	           sizeof(mean_field_record) * (size_t)n_part2_in,
++	           cudaMemcpyHostToDevice);
++
++	dim3 t(128), b((n_part2_in - 1) / 128 + 1);
++	KERNEL_apply_mean_field<<<b, t>>>(dev_P1, dev_rec);
++	cudaDeviceSynchronize();
++
++	cudaFree(dev_rec);
++	free(host_rec);
++
++	// Restore reference scalars updated by MOST at freeze time
++	cudaMemcpyToSymbol(us_update,        &hdr.us_update,        sizeof(float));
++	cudaMemcpyToSymbol(OB_length_global, &hdr.OB_length_global, sizeof(float));
++
++	printf("[mean] loaded %d records, avg_count_at_dump=%u, us=%.4f, OB=%.4e <- %s\n",
++	       n_part2_in, hdr.avg_count_at_dump, hdr.us_update, hdr.OB_length_global, path);
++	return 1;
++}
+diff --git a/functions_initial_conditions.cuh b/functions_initial_conditions.cuh
+index 64e683a..0f12cc2 100644
+--- a/functions_initial_conditions.cuh
++++ b/functions_initial_conditions.cuh
+@@ -176,41 +176,9 @@ double Interpolate_ux_ABL(Real z_inp){
+ 
+ 	Real a=0.19;
+ 	Real u_ref=10.0;
+-	Real z_ref=100.0;
++	Real z_ref=L_ceiling;   // reference height = domain top (max height)
+ 	
+ 	Real ux=0.0;
+-	// switch(terrain_type){
+-	// 	case 0:
+-	// 		a=0.14;
+-	// 		z_ref=300.0;
+-	// 		printf("terrain type: flat\n");
+-	// 		break;
+-	// 	case 1:
+-	// 		a=0.19;
+-	// 		z_ref=350.0;
+-	// 		printf("terrain type: Other\n");
+-	// 		break;
+-	// 	case 2:
+-	// 		a=0.19;
+-	// 		z_ref=350.0;
+-	// 		printf("terrain type: other\n");
+-	// 		break;
+-	// 	case 3:
+-	// 		a=0.19;
+-	// 		z_ref=350.0;
+-	// 		printf("terrain type: other\n");
+-	// 		break;
+-	// 	case 4:
+-	// 		a=0.19;
+-	// 		z_ref=350.0;
+-	// 		printf("terrain type: other\n");
+-	// 		break;
+-	// 	default:
+-	// 		a=0.19;
+-	// 		z_ref=350.0;
+-	// 		printf("terrain type: flat\n");
+-	// 		break;
+-	// }
+ 
+ 	ux=u_ref*pow(z_inp/z_ref,a);
+ 	if(z_inp<0.0) ux=0.0;

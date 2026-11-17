@@ -1,0 +1,331 @@
+--- a/SOPHIA_gpu.cu
++++ b/SOPHIA_gpu.cu
+@@ -139,7 +139,7 @@
+ 
+ 	ngpu=atoi(argv[1]);
+ 
+-	char fn[64],fn2[64];
++	char fn[256],fn2[256];
+ 	strcpy(fn,SOLV_SPH_PATH);
+ 	strcpy(fn2,"./input/data.txt");
+ 
+--- a/Parameters.cuh
++++ b/Parameters.cuh
+@@ -428,4 +428,15 @@
+ // Run B 가 다른 실험 디렉토리의 mean_field.bin 을 읽을 수 있도록 -D 오버라이드 허용.
+ #ifndef MEAN_FIELD_PATH
+ #define MEAN_FIELD_PATH "./" OUTPUT_CASE_NAME "/mean_field.bin"
++#endif
++
++// Checkpoint / restart (ISPH_Calc.cuh save_checkpoint / load_checkpoint).
++//   CKPT_EVERY > 0 → count%CKPT_EVERY==0 인 스텝 끝마다 CKPT_PATH 에 전체 상태 저장
++//                    (이전 파일은 CKPT_PATH.prev 로 한 벌 보관). 단일 GPU 전용.
++//   재개: 같은 바이너리를 환경변수 SOPHIA_RESTART=<체크포인트 경로> 로 실행.
++#ifndef CKPT_EVERY
++#define CKPT_EVERY 0
++#endif
++#ifndef CKPT_PATH
++#define CKPT_PATH "./" OUTPUT_CASE_NAME "/restart.bin"
+ #endif
+\ No newline at end of file
+--- a/ISPH_Calc.cuh
++++ b/ISPH_Calc.cuh
+@@ -60,6 +60,196 @@
+ static FILE*  g_fp_conv            = NULL;   // ./<OUTPUT_CASE_NAME>/IISPH_conv.txt (per-step iter curve)
+ #endif
+ 
++// true when this process resumed from a checkpoint: per-step logs are opened
++// in append mode so the pre-crash rows are kept (header only if the file is new).
++static bool g_restarted = false;
++static bool ckpt_log_is_new(FILE*fp){ fseek(fp, 0, SEEK_END); return ftell(fp)==0; }
++
++//-------------------------------------------------------------------------------------------------
++// Checkpoint / restart (Parameters.cuh CKPT_EVERY, CKPT_PATH; resume with env SOPHIA_RESTART=<path>)
++//
++// Everything carried across steps (single GPU):
++//   dev_P1, dev_P2               particle state (P3/SP1/SP2 are rebuilt at every step start)
++//   g_str/g_end                  fluid cell lists — built ONCE at count==0 and never again
++//   dev_LP1, dev_LP2             LDM particles (incl. per-particle RNG seed)
++//   g_str_LDM/g_end_LDM          LDM cell lists (rebuilt every freq_LDM steps; saved anyway)
++//   device globals               us_update, OB_length_global, avg_count, avg_start_dyn, avg_end_dyn
++//   host statics                 time, count, h_avg_start/end, count_avg, g_mean_field_dumped, QS buffer
++// File: [ckpt_header][P1][P2][g_str][g_end][LP1][LP2][g_str_LDM][g_end_LDM][qs_buf][end magic]
++// Written to <path>.tmp, fsync'd, previous file kept as <path>.prev, then renamed into place.
++//-------------------------------------------------------------------------------------------------
++#include <unistd.h>
++
++typedef struct ckpt_header {
++	char         magic[16];            // "SOPHIA_CKPT_v1"
++	int          sz_part1, sz_part2, sz_lpart1, sz_lpart2;
++	int          n_part2, n_part_LDM, n_cells, qs_n;
++	int          step;                 // count after the saved step (next step to run)
++	Real         sim_time, step_dt;
++	float        us_update, OB_length_global;
++	unsigned int avg_count;
++	Real         avg_start_dyn, avg_end_dyn;
++	Real         h_avg_start, h_avg_end;
++	int          count_avg;
++	int          mean_field_dumped;
++	int          qs_fill, qs_head;
++	int          pad[8];
++} ckpt_header;
++
++static const char CKPT_MAGIC[16]     = "SOPHIA_CKPT_v1";
++static const char CKPT_END_MAGIC[16] = "SOPHIA_CKPT_END";
++
++static bool ckpt_write(FILE*fp, const void*buf, size_t n){ return fwrite(buf,1,n,fp)==n; }
++static bool ckpt_read (FILE*fp,       void*buf, size_t n){ return fread (buf,1,n,fp)==n; }
++
++// Host buffers file_P1/file_P2/file_LP1/file_LP2 are reused as staging (outputs recopy before use).
++static bool save_checkpoint(const char*path,
++	part1*dev_P1, part2*dev_P2, int_t*g_str, int_t*g_end,
++	L_part1*dev_LP1, L_part2*dev_LP2, int_t*g_str_LDM, int_t*g_end_LDM,
++	part1*file_P1, part2*file_P2, L_part1*file_LP1, L_part2*file_LP2)
++{
++	struct timespec t0, t1;
++	clock_gettime(CLOCK_MONOTONIC, &t0);
++
++	size_t n_cell_bytes = sizeof(int_t)*num_cells;
++	int_t*h_gs  =(int_t*)malloc(n_cell_bytes), *h_ge  =(int_t*)malloc(n_cell_bytes);
++	int_t*h_gsL =(int_t*)malloc(n_cell_bytes), *h_geL =(int_t*)malloc(n_cell_bytes);
++
++	cudaMemcpy(file_P1,  dev_P1,  sizeof(part1)*num_part2,      cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_P2,  dev_P2,  sizeof(part2)*num_part2,      cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_LP1, dev_LP1, sizeof(L_part1)*num_part_LDM, cudaMemcpyDeviceToHost);
++	cudaMemcpy(file_LP2, dev_LP2, sizeof(L_part2)*num_part_LDM, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_gs,  g_str,     n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_ge,  g_end,     n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_gsL, g_str_LDM, n_cell_bytes, cudaMemcpyDeviceToHost);
++	cudaMemcpy(h_geL, g_end_LDM, n_cell_bytes, cudaMemcpyDeviceToHost);
++
++	ckpt_header hdr;
++	memset(&hdr, 0, sizeof(hdr));
++	memcpy(hdr.magic, CKPT_MAGIC, sizeof(CKPT_MAGIC));
++	hdr.sz_part1 = sizeof(part1);   hdr.sz_part2  = sizeof(part2);
++	hdr.sz_lpart1= sizeof(L_part1); hdr.sz_lpart2 = sizeof(L_part2);
++	hdr.n_part2  = num_part2; hdr.n_part_LDM = num_part_LDM; hdr.n_cells = num_cells; hdr.qs_n = QS_DETECT_N;
++	hdr.step     = count; hdr.sim_time = time; hdr.step_dt = dt;
++	cudaMemcpyFromSymbol(&hdr.us_update,        us_update,        sizeof(float));
++	cudaMemcpyFromSymbol(&hdr.OB_length_global, OB_length_global, sizeof(float));
++	cudaMemcpyFromSymbol(&hdr.avg_count,        avg_count,        sizeof(unsigned int));
++	cudaMemcpyFromSymbol(&hdr.avg_start_dyn,    avg_start_dyn,    sizeof(Real));
++	cudaMemcpyFromSymbol(&hdr.avg_end_dyn,      avg_end_dyn,      sizeof(Real));
++	hdr.h_avg_start = h_avg_start; hdr.h_avg_end = h_avg_end;
++	hdr.count_avg = count_avg; hdr.mean_field_dumped = g_mean_field_dumped ? 1 : 0;
++	hdr.qs_fill = g_qs_uu_fill; hdr.qs_head = g_qs_uu_head;
++
++	char tmp[512], prev[512];
++	snprintf(tmp,  sizeof(tmp),  "%s.tmp",  path);
++	snprintf(prev, sizeof(prev), "%s.prev", path);
++
++	bool ok = false;
++	FILE*fp = fopen(tmp, "wb");
++	if(fp){
++		ok = ckpt_write(fp, &hdr, sizeof(hdr))
++		  && ckpt_write(fp, file_P1,  sizeof(part1)*num_part2)
++		  && ckpt_write(fp, file_P2,  sizeof(part2)*num_part2)
++		  && ckpt_write(fp, h_gs,  n_cell_bytes) && ckpt_write(fp, h_ge,  n_cell_bytes)
++		  && ckpt_write(fp, file_LP1, sizeof(L_part1)*num_part_LDM)
++		  && ckpt_write(fp, file_LP2, sizeof(L_part2)*num_part_LDM)
++		  && ckpt_write(fp, h_gsL, n_cell_bytes) && ckpt_write(fp, h_geL, n_cell_bytes)
++		  && ckpt_write(fp, g_qs_uu_buf, sizeof(Real)*QS_DETECT_N)
++		  && ckpt_write(fp, CKPT_END_MAGIC, sizeof(CKPT_END_MAGIC));
++		ok = (fflush(fp)==0) && ok;
++		ok = (fsync(fileno(fp))==0) && ok;
++		ok = (fclose(fp)==0) && ok;
++	}
++	free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++
++	if(ok){
++		rename(path, prev);              // keep one previous generation (fails harmlessly on the first save)
++		ok = (rename(tmp, path)==0);
++	}
++	clock_gettime(CLOCK_MONOTONIC, &t1);
++	double wall = (t1.tv_sec-t0.tv_sec) + 1e-9*(t1.tv_nsec-t0.tv_nsec);
++	if(ok) printf("[ckpt] saved count=%d t=%.4f avg_count=%u -> %s (%.1f s)\n",
++	              (int)count, (double)time, hdr.avg_count, path, wall);
++	else   printf("[ckpt] ERROR: checkpoint write failed (%s); previous checkpoint left untouched\n", tmp);
++	fflush(stdout);
++	return ok;
++}
++
++// Called after device arrays are allocated/initialised and the averaging window is set,
++// right before the main loop. Overwrites the initial state; returns false on any mismatch.
++static bool load_checkpoint(const char*path,
++	part1*dev_P1, part2*dev_P2, int_t*g_str, int_t*g_end,
++	L_part1*dev_LP1, L_part2*dev_LP2, int_t*g_str_LDM, int_t*g_end_LDM,
++	part1*file_P1, part2*file_P2, L_part1*file_LP1, L_part2*file_LP2)
++{
++	FILE*fp = fopen(path, "rb");
++	if(!fp){ printf("[ckpt] FATAL: cannot open %s\n", path); return false; }
++
++	ckpt_header hdr;
++	if(!ckpt_read(fp, &hdr, sizeof(hdr)) || memcmp(hdr.magic, CKPT_MAGIC, sizeof(CKPT_MAGIC))!=0){
++		printf("[ckpt] FATAL: %s is not a SOPHIA checkpoint\n", path); fclose(fp); return false;
++	}
++	if(hdr.sz_part1!=(int)sizeof(part1) || hdr.sz_part2!=(int)sizeof(part2) ||
++	   hdr.sz_lpart1!=(int)sizeof(L_part1) || hdr.sz_lpart2!=(int)sizeof(L_part2) ||
++	   hdr.n_part2!=num_part2 || hdr.n_part_LDM!=num_part_LDM || hdr.n_cells!=num_cells ||
++	   hdr.qs_n!=QS_DETECT_N || hdr.step_dt!=dt){
++		printf("[ckpt] FATAL: checkpoint does not match this build/input "
++		       "(part1 %d/%d part2 %d/%d L_part1 %d/%d L_part2 %d/%d n_part2 %d/%d n_LDM %d/%d cells %d/%d qs %d/%d dt %g/%g)\n",
++		       hdr.sz_part1,(int)sizeof(part1), hdr.sz_part2,(int)sizeof(part2),
++		       hdr.sz_lpart1,(int)sizeof(L_part1), hdr.sz_lpart2,(int)sizeof(L_part2),
++		       hdr.n_part2,(int)num_part2, hdr.n_part_LDM,(int)num_part_LDM, hdr.n_cells,(int)num_cells,
++		       hdr.qs_n,(int)QS_DETECT_N, (double)hdr.step_dt,(double)dt);
++		fclose(fp); return false;
++	}
++
++	size_t n_cell_bytes = sizeof(int_t)*num_cells;
++	int_t*h_gs  =(int_t*)malloc(n_cell_bytes), *h_ge  =(int_t*)malloc(n_cell_bytes);
++	int_t*h_gsL =(int_t*)malloc(n_cell_bytes), *h_geL =(int_t*)malloc(n_cell_bytes);
++	char end_magic[16];
++	bool ok = ckpt_read(fp, file_P1,  sizeof(part1)*num_part2)
++	       && ckpt_read(fp, file_P2,  sizeof(part2)*num_part2)
++	       && ckpt_read(fp, h_gs,  n_cell_bytes) && ckpt_read(fp, h_ge,  n_cell_bytes)
++	       && ckpt_read(fp, file_LP1, sizeof(L_part1)*num_part_LDM)
++	       && ckpt_read(fp, file_LP2, sizeof(L_part2)*num_part_LDM)
++	       && ckpt_read(fp, h_gsL, n_cell_bytes) && ckpt_read(fp, h_geL, n_cell_bytes)
++	       && ckpt_read(fp, g_qs_uu_buf, sizeof(Real)*QS_DETECT_N)
++	       && ckpt_read(fp, end_magic, sizeof(end_magic))
++	       && memcmp(end_magic, CKPT_END_MAGIC, sizeof(CKPT_END_MAGIC))==0;
++	fclose(fp);
++	if(!ok){
++		printf("[ckpt] FATAL: %s is truncated or corrupt\n", path);
++		free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++		return false;
++	}
++
++	cudaMemcpy(dev_P1,  file_P1,  sizeof(part1)*num_part2,      cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_P2,  file_P2,  sizeof(part2)*num_part2,      cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_LP1, file_LP1, sizeof(L_part1)*num_part_LDM, cudaMemcpyHostToDevice);
++	cudaMemcpy(dev_LP2, file_LP2, sizeof(L_part2)*num_part_LDM, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_str,     h_gs,  n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_end,     h_ge,  n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_str_LDM, h_gsL, n_cell_bytes, cudaMemcpyHostToDevice);
++	cudaMemcpy(g_end_LDM, h_geL, n_cell_bytes, cudaMemcpyHostToDevice);
++	free(h_gs); free(h_ge); free(h_gsL); free(h_geL);
++
++	cudaMemcpyToSymbol(us_update,        &hdr.us_update,        sizeof(float));
++	cudaMemcpyToSymbol(OB_length_global, &hdr.OB_length_global, sizeof(float));
++	cudaMemcpyToSymbol(avg_count,        &hdr.avg_count,        sizeof(unsigned int));
++	cudaMemcpyToSymbol(avg_start_dyn,    &hdr.avg_start_dyn,    sizeof(Real));
++	cudaMemcpyToSymbol(avg_end_dyn,      &hdr.avg_end_dyn,      sizeof(Real));
++	time = hdr.sim_time; count = hdr.step;
++	h_avg_start = hdr.h_avg_start; h_avg_end = hdr.h_avg_end;
++	count_avg = hdr.count_avg; g_mean_field_dumped = (hdr.mean_field_dumped!=0);
++	g_qs_uu_fill = hdr.qs_fill; g_qs_uu_head = hdr.qs_head;
++	g_restarted = true;
++
++	printf("[ckpt] RESTART from %s: count=%d t=%.4f avg_count=%u h_avg=[%.3f, %.3f) count_avg=%d mean_dumped=%d\n",
++	       path, (int)count, (double)time, hdr.avg_count, (double)h_avg_start, (double)h_avg_end,
++	       (int)count_avg, hdr.mean_field_dumped);
++	fflush(stdout);
++	return true;
++}
++
+ //-------------------------------------------------------------------------------------------------
+ // 모든 입자 계산을 수행하는 주함수 + LDM
+ //-------------------------------------------------------------------------------------------------
+@@ -288,11 +478,11 @@
+ 		cudaMalloc(&g_iisph_storage, g_iisph_storage_bytes);
+ 		if(tid==0){
+ 			char fn[512]; sprintf(fn, "./%s/IISPH_log.txt", OUTPUT_CASE_NAME);
+-			g_fp_iisph=fopen(fn,"w");
+-			if(g_fp_iisph){ fprintf(g_fp_iisph,"# step\ttime\titer_used\tavg_dens_err\tconverged\n"); fflush(g_fp_iisph); }
++			g_fp_iisph=fopen(fn,g_restarted?"a":"w");
++			if(g_fp_iisph && ckpt_log_is_new(g_fp_iisph)){ fprintf(g_fp_iisph,"# step\ttime\titer_used\tavg_dens_err\tconverged\n"); fflush(g_fp_iisph); }
+ 			char fc[512]; sprintf(fc, "./%s/IISPH_conv.txt", OUTPUT_CASE_NAME);
+-			g_fp_conv=fopen(fc,"w");
+-			if(g_fp_conv){ fprintf(g_fp_conv,"# step\titer\tavg_div\n"); fflush(g_fp_conv); }
++			g_fp_conv=fopen(fc,g_restarted?"a":"w");
++			if(g_fp_conv && ckpt_log_is_new(g_fp_conv)){ fprintf(g_fp_conv,"# step\titer\tavg_div\n"); fflush(g_fp_conv); }
+ 		}
+ 	}
+ 
+@@ -369,8 +559,8 @@
+ 		if(tid==0){
+ 			char fn[512];
+ 			sprintf(fn, "./%s/PPE_iter_log.txt", OUTPUT_CASE_NAME);
+-			g_fp_ppe_log = fopen(fn, "w");
+-			if(g_fp_ppe_log){
++			g_fp_ppe_log = fopen(fn, g_restarted?"a":"w");
++			if(g_fp_ppe_log && ckpt_log_is_new(g_fp_ppe_log)){
+ 				fprintf(g_fp_ppe_log, "# IMPLICIT_PPE Jacobi solver log\n");
+ 				fprintf(g_fp_ppe_log, "# tolerance=%g  minIter=%d  maxIter=%d\n",
+ 				        (double)PPE_TOLERANCE, (int)minIteration, (int)maxIteration);
+@@ -519,8 +709,8 @@
+ #else
+ 			sprintf(fn, "./%s/PPE_diag_explicit.csv", OUTPUT_CASE_NAME);
+ #endif
+-			g_fp_diag=fopen(fn,"w");
+-			if(g_fp_diag){ fprintf(g_fp_diag,"step,time,bi_max,resid_max,div_un1_max,div_un1_avg,div_un1_plain_max,div_un1_plain_avg\n"); fflush(g_fp_diag); }
++			g_fp_diag=fopen(fn,g_restarted?"a":"w");
++			if(g_fp_diag && ckpt_log_is_new(g_fp_diag)){ fprintf(g_fp_diag,"step,time,bi_max,resid_max,div_un1_max,div_un1_avg,div_un1_plain_max,div_un1_plain_avg\n"); fflush(g_fp_diag); }
+ 
+ 			// Cache fluid count for the average
+ 			cudaMemsetAsync(g_diag_resid, 0, sizeof(Real)*num_part2);
+@@ -1156,6 +1346,27 @@
+ 	pthread_barrier_wait(&barrier);
+ #endif
+ 
++	// Resume from checkpoint (env SOPHIA_RESTART=<path>). Any failure aborts instead of
++	// silently starting from t=0 and overwriting the run's outputs.
++	{
++		const char*restart_path = getenv("SOPHIA_RESTART");
++		if(restart_path && restart_path[0]){
++			bool ok = (ngpu==1);
++			if(!ok) printf("[ckpt] FATAL: restart supports ngpu==1 only (ngpu=%d)\n", (int)ngpu);
++#if LDM_MEAN_MODE
++			ok = false;
++			printf("[ckpt] FATAL: restart is not supported with LDM_MEAN_MODE (mean field loads at count==0)\n");
++#endif
++			if(ok) ok = load_checkpoint(restart_path, dev_P1, dev_P2, g_str, g_end, dev_LP1, dev_LP2,
++			                            g_str_LDM, g_end_LDM, file_P1, file_P2, file_LP1, file_LP2);
++			if(!ok || count<=0){
++				printf("[ckpt] aborting (restart requested but not possible)\n");
++				fflush(stdout);
++				exit(1);
++			}
++		}
++	}
++
+ 	while(1){
+ 
+ 		if(ngpu==1){
+@@ -1309,6 +1520,12 @@
+ 			}
+ 		}
+ 
++		// Periodic checkpoint. count has already been advanced, so the file resumes at the next step.
++		if(tid==0 && ngpu==1 && (int_t)CKPT_EVERY > 0 && (count % (int_t)CKPT_EVERY)==0 && time < time_end){
++			save_checkpoint(CKPT_PATH, dev_P1, dev_P2, g_str, g_end, dev_LP1, dev_LP2,
++			                g_str_LDM, g_end_LDM, file_P1, file_P2, file_LP1, file_LP2);
++		}
++
+ 		pthread_barrier_wait(&barrier);
+ 		if(time>=time_end) break;
+ 		// Early stop: LDM_DURATION_AFTER_AVG seconds past h_avg_start latch.
+@@ -1324,21 +1541,9 @@
+ 
+ 
+ 	//-------------------------------------------------------------------------------------------------
+-	// ##. Save Restart File
++	// ##. Save Restart File — periodic checkpoints are written inside the loop (CKPT_EVERY, save_checkpoint)
+ 	//-------------------------------------------------------------------------------------------------
+ 
+-	// if(ngpu==1) {
+-	//
+-	// 	save_restart(file_P1,file_P2,file_P3);
+-	// 	cudaMemcpy(file_P1,dev_SP1,num_part2*sizeof(part1),cudaMemcpyDeviceToHost);
+-	// 	cudaMemcpy(file_P2,dev_SP2,num_part2*sizeof(part2),cudaMemcpyDeviceToHost);
+-	// 	cudaMemcpy(file_P3,dev_SP3,num_part2*sizeof(part3),cudaMemcpyDeviceToHost);
+-	//
+-	//
+-	// 	free(file_P2);
+-	// 	free(file_P3);
+-	// }
+-
+ 	//-------------------------------------------------------------------------------------------------
+ 	// ##. Memory Free
+ 	//-------------------------------------------------------------------------------------------------

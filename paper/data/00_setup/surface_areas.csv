@@ -1,0 +1,5 @@
+class,point_based_m2,field_based_m2,n_points
+roof,212040.3,214093.8,128791
+wall,690647.2,584016.5,425113
+ground_derived,,536281.2,
+builtup_analysis_area,,750375.0,

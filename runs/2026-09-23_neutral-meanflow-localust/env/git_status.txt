@@ -1,0 +1,95 @@
+ M CLAUDE.md
+ M ISPH.cuh
+ M ISPH_Calc.cuh
+ M Parameters.cuh
+ M SOPHIA_gpu.cu
+ M case_config.cuh
+ M class_Cuda_Particle_Array.cuh
+R  CLAUDE_1.md -> docs/CLAUDE_1.md
+R  KGC_keps_formulation.md -> docs/KGC_keps_formulation.md
+R  K_EPSILON_MODEL.md -> docs/K_EPSILON_MODEL.md
+R  THESIS_GPU_NOTES.md -> docs/THESIS_GPU_NOTES.md
+R  Temperature_advection.md -> docs/Temperature_advection.md
+ M functions_BC.cuh
+ M functions_DD.cuh
+ M functions_LDM.cuh
+ M functions_MOST.cuh
+ M functions_NNPS.cuh
+ M functions_PPE.cuh
+ M functions_TIME_ISPH.cuh
+ M functions_initial_conditions.cuh
+ D input/CaseA.txt
+ D input/CaseC1.txt
+ D input/CaseC1_LDM.txt
+ D input/CaseC1_low.txt
+ D input/CaseC1_noslip.txt
+ D input/CaseC2.txt
+ D input/CaseC2_LDM.txt
+ D input/CaseC2_low.txt
+ D input/CaseC2_noslip.txt
+ D input/CaseC3.txt
+ D input/CaseC3_LDM.txt
+ D input/CaseHS_LDM.txt
+ D input/CaseHS_LDM_Back.txt
+ D input/CaseHS_LDM_Front.txt
+ D input/CaseHS_LDM_Top.txt
+ D input/CaseHS_n10.txt
+ D input/CaseRS_IBMX.txt
+ D input/Leipzig.txt
+ D input/Leipzig1.txt
+ D input/Leipzig2.txt
+ D input/Leipzig3.txt
+ D input/Leipzig_LDM.txt
+ D input/Leipzig_point/Leipzig_point.txt
+ D input/Leipzig_point/Leipzig_point_LDM.txt
+ D input/Leipzig_point/Leipzig_point_solv.txt
+ M input/Transport_advection/Transport_advection.txt
+ M input/Transport_advection/Transport_advection_LDM.txt
+ D input/input.txt
+ D input/solv.txt
+?? .gitignore
+?? Makefile
+?? docs/BENCHMARK_baseline.md
+?? docs/EXPERIMENT_WORKFLOW.md
+?? docs/IISPH_investigation_summary.md
+?? docs/PPE_explicit_vs_implicit.md
+?? docs/README.md
+?? docs/REPO_RESTRUCTURE_2026-09-08.md
+?? docs/attachments/
+?? exp/
+?? input/CaseA/
+?? input/CaseAS/
+?? input/CaseAS_DDF/
+?? input/CaseAS_SSM/
+?? input/CaseAS_d305/
+?? input/CaseAS_d320/
+?? input/CaseAS_d330/
+?? input/CaseAS_s305/
+?? input/CaseAS_s320/
+?? input/CaseAS_s330/
+?? input/CaseC1/
+?? input/CaseC2/
+?? input/CaseC3/
+?? input/CaseCS1/
+?? input/CkptTest/
+?? input/Kori/
+?? input/Leipzig_dt01_wall/
+?? input/Leipzig_inner/
+?? input/Leipzig_inner2/
+?? input/Leipzig_inner_reduce/
+?? input/Leipzig_rot180/
+?? input/Leipzig_rot270/
+?? input/Leipzig_rot90/
+?? input/Leipzig_s10_dt01/
+?? input/Leipzig_s10_dt01_full/
+?? input/Leipzig_stable/
+?? input/Leipzig_surface/
+?? input/Leipzig_surface_full/
+?? input/Leipzig_surface_s10/
+?? input/Leipzig_z20/
+?? input/Leipzig_z25/
+?? input/MOST_Validation/
+?? input/RANS_LES_Validation/
+?? input/Transport_advection/Transport_advection_solv.txt
+?? python/
+?? runs/

@@ -172,45 +172,16 @@ double Interpolate_k_caseAS(Real z_inp){
     return ((1.0 - t) * u0 + t * u1)*u_scale;         // 선형 보간
 }
 
+#ifndef ABL_ALPHA
+#define ABL_ALPHA 0.19   // 유입 멱법칙 지수 (CEDVAL BL3 = 0.27)
+#endif
 double Interpolate_ux_ABL(Real z_inp){
 
-	Real a=0.19;
+	Real a=(Real)ABL_ALPHA;
 	Real u_ref=10.0;
-	Real z_ref=100.0;
+	Real z_ref=L_ceiling;   // reference height = domain top (max height)
 	
 	Real ux=0.0;
-	// switch(terrain_type){
-	// 	case 0:
-	// 		a=0.14;
-	// 		z_ref=300.0;
-	// 		printf("terrain type: flat\n");
-	// 		break;
-	// 	case 1:
-	// 		a=0.19;
-	// 		z_ref=350.0;
-	// 		printf("terrain type: Other\n");
-	// 		break;
-	// 	case 2:
-	// 		a=0.19;
-	// 		z_ref=350.0;
-	// 		printf("terrain type: other\n");
-	// 		break;
-	// 	case 3:
-	// 		a=0.19;
-	// 		z_ref=350.0;
-	// 		printf("terrain type: other\n");
-	// 		break;
-	// 	case 4:
-	// 		a=0.19;
-	// 		z_ref=350.0;
-	// 		printf("terrain type: other\n");
-	// 		break;
-	// 	default:
-	// 		a=0.19;
-	// 		z_ref=350.0;
-	// 		printf("terrain type: flat\n");
-	// 		break;
-	// }
 
 	ux=u_ref*pow(z_inp/z_ref,a);
 	if(z_inp<0.0) ux=0.0;

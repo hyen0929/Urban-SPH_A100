@@ -1,0 +1,51 @@
+# IBM_PPE_WALL off/on A/B — 측정 결과 (step 31500, t=315 s)
+
+## 커널 지지역 회복률 (Wendland6 적분, support.py)
+Leipzig  h=3.75 kappa=2.0 R=7.5 m, marker shell=2.5 m, fluid at d0=1.25 m
+   Shepard  : solid side holds  21.1% of the support; markers recover  97.2% of it -> deficit 21.1% ->  0.6%
+   sum gradW: markers cancel  93.2% of the one-sided normal term
+
+Leipzig  h=3.75 kappa=2.0 R=7.5 m, marker shell=2.5 m, fluid at d0=2.5 m
+   Shepard  : solid side holds   5.2% of the support; markers recover  99.6% of it -> deficit  5.2% ->  0.0%
+   sum gradW: markers cancel  99.1% of the one-sided normal term
+
+Kori     h=7.5 kappa=2.0 R=15.0 m, marker shell=2.5 m, fluid at d0=2.5 m
+   Shepard  : solid side holds  21.1% of the support; markers recover  75.4% of it -> deficit 21.1% ->  5.2%
+   sum gradW: markers cancel  61.5% of the one-sided normal term
+
+## 벽 인접 대역 통계 (wall_analysis.py)
+=== step 31500 ===
+  off: N=43046441
+  on: N=43046441
+  위치 배열 동일: True
+  마커=553904  유체(p_type=1)=40548434
+  내부로 판정된 유체 = 258683  (0.64%)
+  벽 인접 외부유체 = 141072  (0.35% of 외부유체)
+
+지표                                      OFF           ON        변화
+------------------------------------------------------------------
+mean_speed_wall                     0.94381       1.0081     +6.8%
+p95_speed_wall                        3.744       4.0888     +9.2%
+max_speed_wall                           20           20     +0.0%
+clip_wall                                11           88   +700.0%
+mean_speed_all                       8.4808       8.4774     -0.0%
+clip_all                                464          976   +110.3%
+mean_p_wall                          -2.247        0.103   -104.6%
+std_p_wall                           5.6639       5.8231     +2.8%
+
+## 벽 법선/접선 분해 (wall_normal.py)
+셀당 최대 마커 수 = 29
+
+=== step 31500 ===
+벽 첫 층 외부유체 = 126123   거리 0.04~3.75 m, 중앙값 2.36 m
+
+지표                                       OFF          ON        변화
+------------------------------------------------------------------
+평균 u_n (+ = 벽 향함)                  0.0045332    0.016713   +268.7%
+평균 |u_n|                             0.15873     0.13609    -14.3%
+rms u_n                              0.29989     0.25095    -16.3%
+투과(u_n>0) 비율 %                          50.8      56.047    +10.3%
+투과입자 평균 u_n                          0.16069     0.13632    -15.2%
+p95 |u_n|                            0.54838       0.488    -11.0%
+평균 |u_t|                             0.65451     0.68386     +4.5%
+rms u_t / rms u_n                     3.6903      4.9205    +33.3%

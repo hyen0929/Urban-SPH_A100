@@ -5,7 +5,7 @@
 // Case selector
 // ============================================================
 #ifndef CASE_ID
-#define CASE_ID 501
+#define CASE_ID 1010
 #endif
 
 // ============================================================
@@ -166,8 +166,8 @@
 // ------------------------------------------------------------
   #define L1  0.0
   #define L2  3.5
-  #define L3  2600.0
-  #define L4  2600.0
+  #define L3  246.5
+  #define L4  251.0
 
   #define L_left   -71.5
   #define L_right   71.5
@@ -206,15 +206,58 @@
 // ------------------------------------------------------------  
 #elif CASE_ID == 1002
 
+  // Leipzig_surface / Leipzig_surface_full particles span
+  //   x[0, 1315]  y[-657.5, 657.5]  z[-8.75, 371.25]   (527 x 527 x 146, dx=2.5)
+  // with h=3.75 and kappa=2, i.e. a kernel support radius of 7.5 m = 3 planes.
+  // Every buffer band below must contain real particles: the matching BC kernel
+  // early-returns on buffer_type, so an empty band leaves that face running as
+  // plain interior fluid with truncated support (2026-09-10: that is what pinned
+  // the x=1315 and y=+657.5 planes at the 20 m/s velocity limit).
+  #define L1  0.0
+  #define L2  8.75      // inlet buffer   x < L2       : 4 planes, 0 ... 7.5
+  #define L3  1307.5    // outlet buffer  L3 <= x < L4 : 4 planes, 1307.5 ... 1315
+  #define L4  1317.5
+
+  // y-periodic: period = L_right - L_left = 1297.5 = 519 planes x 2.5, so the
+  // buffer planes +-650 ... +-657.5 map exactly onto interior planes -+640 ... -+647.5.
+  // KERNEL_periodic_boundary3D copies by exact position (tol 1e-3) and zeroes the
+  // particle when no image is found, so the period must stay an exact multiple of dx.
+  #define L_left   -648.75
+  #define L_right   648.75
+  #define L_ceiling 371.25
+
+  #define L_MOST_x0   0.0
+  #define L_MOST_xmax 1990.0
+
+// ------------------------------------------------------------
+// CEDVAL Complexity 2 (BL3-2-1 엇갈림 큐브 배열, dx=2.5m) — 확산 검증
+//   input/CEDVAL_C2 (validation/cedval/make_input.py)
+//   x[0,815] y[-367.5,367.5] z[-8.75,216.25]; 버퍼·주기 규칙은 1002 와 같음
+// ------------------------------------------------------------
+#elif CASE_ID == 1020
   #define L1  0.0
   #define L2  8.75
-  #define L3  2200.0
-  #define L4  2210.0
+  #define L3  807.5
+  #define L4  817.5
+  #define L_left   -358.75     // 주기 717.5 = 287 dx
+  #define L_right   358.75
+  #define L_ceiling 216.25
+  #define L_MOST_x0   0.0
+  #define L_MOST_xmax 1990.0
 
-  #define L_left   -678.75
-  #define L_right   678.75
-  #define L_ceiling 15463.75
-
+// ------------------------------------------------------------
+// CEDVAL Complexity 2, dx=1.5m — 배열을 y 주기 432 m 로 무한 반복, 도메인 축소
+//   input/CEDVAL_C2_dx15 (validation/cedval/make_input.py CEDVAL_C2_dx15)
+//   x[0,669] y[-221.25,221.25] z[-5.25,195.75]; SPH x = CEDVAL x + 341.25
+// ------------------------------------------------------------
+#elif CASE_ID == 1021
+  #define L1  0.0
+  #define L2  5.25      // 유입 버퍼 4 면: 0 … 4.5
+  #define L3  663.75    // 유출 버퍼 4 면: 664.5 … 669
+  #define L4  670.5
+  #define L_left   -216.0      // 주기 432 = 288 dx, 버퍼 ±216.75 … ±221.25
+  #define L_right   216.0
+  #define L_ceiling 195.75
   #define L_MOST_x0   0.0
   #define L_MOST_xmax 1990.0
 
@@ -276,8 +319,8 @@
 
   #define L1  0.0
   #define L2  17.5
-  #define L3  3200.0
-  #define L4  3210.0
+  #define L3  2855.0
+  #define L4  2865.0
 
   #define L_left   -1272.5
   #define L_right   1272.5
@@ -285,6 +328,10 @@
 
   #define L_MOST_x0   15.0
   #define L_MOST_xmax 1990.0
+
+  // Kori는 건물(IBM)이 핵심 → IBM 활성화 보장
+  #undef  DEACTIVATE_IBM
+  #define DEACTIVATE_IBM 0
 
 // ------------------------------------------------------------
 // Scalar Transport test (dx=0.01m)

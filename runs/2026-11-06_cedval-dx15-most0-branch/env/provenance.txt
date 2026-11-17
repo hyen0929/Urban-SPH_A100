@@ -1,0 +1,6 @@
+branch=consistent-ppe
+sha=50f000ef773a59c6034320dad0bf05476960cf78
+dirty= +uncommitted
+host=user
+created=2026-11-06 20:11:31
+restart=runs/2026-11-03_cedval-c2-puff-dx15/out/restart_t1000.bin

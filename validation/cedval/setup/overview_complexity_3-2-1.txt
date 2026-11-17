@@ -1,0 +1,41 @@
+Complexity 3-2-1:
+
+Measurements within a cube array, configuration 1. 
+
+Boundary layer setup:
+
+
+	roughness class (VDI) 	Zo[m]  alpha[-]  scale	  wind tunnel
+
+BL 3	very rough		1.53	0.27	 1:225	  Wotan
+
+
+*****
+
+Coordinate system:
+
+point of origin: in the middle of the wind tunnel
+
+x: longitudinal to the wind tunnnel, in the direction of the mean flow
+y: lateral to the wind tunnel
+z: z=0 at the bottom of the wind tunnel
+
+
+*****
+
+Flow measurements within the model area:
+
+Highly time resolved time series are measured with a 2D LDA.
+There are measurements of the U- and V-component for the measurements in the horizontal planes 
+and of the U- and W-component for the verical profiles.
+Additional to the time series there are files with the statistics.
+
+
+130-134		vertical profiles 			UW
+74-114		horizontal plane z = 2 m		UV	
+116-129		horizontal plane z = 18 m (1H)		UV
+57-59		horizontal plane z = 36 m (2H)		UV
+
+
+*******
+

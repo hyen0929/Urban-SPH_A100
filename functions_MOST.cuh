@@ -262,14 +262,31 @@ __global__ void KERNEL_MOST_boundary3D(int_t*g_str, int_t*g_end, part1*P1, part3
     if(apply_heat) P3[i].dtemp += sensible_heat_flux/(space*rhoi*Air_cp);
     if(apply_heat) P1[i].hmz = sensible_heat_flux/(space*rhoi*Air_cp);
 
-    // Update reference friction velocity at domain midpoint
-    Real x_ref = 0.5f*(L_MOST_x0 + L_MOST_xmax);
-    if((xi-x_ref)*(xi-x_ref)+yi*yi<1e-3){ us_update=u_star; OB_length_global=OB_length; }
+    // 밴드 전체를 누적한다 (평균은 KERNEL_MOST_band_reduce).
+    // 종전에는 도메인 중점 한 점만 샘플했는데, CASE_ID 1002 는 L_MOST_xmax 가
+    // 2000 m 급 케이스에서 복사된 1990 (실제 도메인은 x=1315) 이라 x_ref=995 가
+    // 건물 안에 떨어졌다. IBM 이 공기를 붙들어 |U|~0.18 m/s -> u*=0.028,
+    // Ri_b=8.8 (임계 초과) 로 Newton 에 해가 없어 L 이 -500 클램프에 박혔다.
+    atomicAdd(&us_band_sum,   (float)u_star);
+    atomicAdd(&invL_band_sum, (float)(1.0f/OB_length));
+    atomicAdd(&us_band_cnt,   1);
 
     // Store results in particle
     // P1[i].float1 = u_star;
     // P1[i].float2 = theta_star;
     // P1[i].float3 = OB_length;
+}
+
+// 밴드 누적값을 평균내어 전역 폴백 스칼라로 넣고 누적기를 0 으로 되돌린다.
+// KERNEL_MOST_boundary3D 직후 <<<1,1>>> 로 부른다.
+__global__ void KERNEL_MOST_band_reduce() {
+    if(threadIdx.x!=0 || blockIdx.x!=0) return;
+    if(us_band_cnt > 0){
+        us_update = us_band_sum / (float)us_band_cnt;
+        float invL = invL_band_sum / (float)us_band_cnt;
+        OB_length_global = (fabsf(invL) < 1e-6f) ? 1e6f : (1.0f/invL);
+    }
+    us_band_sum = 0.0f; invL_band_sum = 0.0f; us_band_cnt = 0;
 }
 
 // MOST inlet BC: prescribes velocity and temperature profiles at inlet buffer

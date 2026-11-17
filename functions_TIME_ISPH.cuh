@@ -459,3 +459,139 @@ __global__ void KERNEL_accumulate_avg(part1* P1)
 	P1[i].k_turb_avg += P1[i].k_turb;
 	P1[i].e_turb_avg += P1[i].e_turb;
 }
+
+// =======================================================================
+// Mean-field I/O for two-run transient-vs-mean LDM comparison.
+//   Run A (LDM_MEAN_MODE=0): at time = AVG_END_TIME, save_mean_field dumps a
+//     one-shot binary snapshot of <ux,uy,uz,k_turb,e_turb> averaged over
+//     [AVG_START_TIME, AVG_END_TIME], keyed by particle index.
+//   Run B (LDM_MEAN_MODE=1): at startup, load_mean_field reads the snapshot
+//     and overwrites dev_P1.ux/uy/uz/k_turb/e_turb so LDM advects on the
+//     frozen mean. SPH solver calls are skipped in ISPH_Calc.cuh.
+// File layout: [mean_field_header][mean_field_record × n_part2]
+// =======================================================================
+typedef struct mean_field_record {
+	float ux, uy, uz;
+	float k_turb, e_turb;
+} mean_field_record;
+
+typedef struct mean_field_header {
+	char         magic[16];           // "SOPHIA_MEAN_v1"
+	int          n_part2;
+	unsigned int avg_count_at_dump;
+	float        us_update;
+	float        OB_length_global;
+	int          pad[4];              // reserved
+} mean_field_header;
+
+__global__ void KERNEL_apply_mean_field(part1* P1, const mean_field_record* mean)
+{
+	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if(i >= k_num_part2) return;
+	P1[i].ux     = mean[i].ux;
+	P1[i].uy     = mean[i].uy;
+	P1[i].uz     = mean[i].uz;
+	P1[i].k_turb = mean[i].k_turb;
+	P1[i].e_turb = mean[i].e_turb;
+}
+
+// file_P1 is a host buffer already copied from dev_P1 by the caller.
+static void save_mean_field(const part1* file_P1, int n_part2_in, const char* path)
+{
+	unsigned int h_avg_count = 0;
+	cudaMemcpyFromSymbol(&h_avg_count, avg_count, sizeof(unsigned int));
+	if(h_avg_count == 0u){
+		printf("[mean] save_mean_field skipped: avg_count == 0\n");
+		return;
+	}
+	float h_us = 0.0f, h_OB = 0.0f;
+	cudaMemcpyFromSymbol(&h_us, us_update,        sizeof(float));
+	cudaMemcpyFromSymbol(&h_OB, OB_length_global, sizeof(float));
+
+	FILE* fp = fopen(path, "wb");
+	if(!fp){
+		printf("[mean] save_mean_field: cannot open %s for write\n", path);
+		return;
+	}
+
+	mean_field_header hdr;
+	memset(&hdr, 0, sizeof(hdr));
+	memcpy(hdr.magic, "SOPHIA_MEAN_v1", 14);
+	hdr.n_part2           = n_part2_in;
+	hdr.avg_count_at_dump = h_avg_count;
+	hdr.us_update         = h_us;
+	hdr.OB_length_global  = h_OB;
+	fwrite(&hdr, sizeof(hdr), 1, fp);
+
+	Real inv_n = (Real)1.0 / (Real)h_avg_count;
+	for(int i = 0; i < n_part2_in; i++){
+		mean_field_record rec;
+		rec.ux     = (float)(file_P1[i].ux_avg     * inv_n);
+		rec.uy     = (float)(file_P1[i].uy_avg     * inv_n);
+		rec.uz     = (float)(file_P1[i].uz_avg     * inv_n);
+		rec.k_turb = (float)(file_P1[i].k_turb_avg * inv_n);
+		rec.e_turb = (float)(file_P1[i].e_turb_avg * inv_n);
+		fwrite(&rec, sizeof(rec), 1, fp);
+	}
+	fclose(fp);
+	printf("[mean] saved %d records, avg_count=%u, us=%.4f, OB=%.4e -> %s\n",
+	       n_part2_in, h_avg_count, h_us, h_OB, path);
+}
+
+static int load_mean_field(part1* dev_P1, int n_part2_in, const char* path)
+{
+	FILE* fp = fopen(path, "rb");
+	if(!fp){
+		printf("[mean] load_mean_field: cannot open %s\n", path);
+		return 0;
+	}
+	mean_field_header hdr;
+	if(fread(&hdr, sizeof(hdr), 1, fp) != 1){
+		printf("[mean] load_mean_field: header read failed\n");
+		fclose(fp);
+		return 0;
+	}
+	if(memcmp(hdr.magic, "SOPHIA_MEAN_v1", 14) != 0){
+		printf("[mean] load_mean_field: bad magic in %s\n", path);
+		fclose(fp);
+		return 0;
+	}
+	if(hdr.n_part2 != n_part2_in){
+		printf("[mean] load_mean_field: n_part2 mismatch (file=%d, runtime=%d)\n",
+		       hdr.n_part2, n_part2_in);
+		fclose(fp);
+		return 0;
+	}
+
+	mean_field_record* host_rec =
+		(mean_field_record*)malloc(sizeof(mean_field_record) * (size_t)n_part2_in);
+	size_t nread = fread(host_rec, sizeof(mean_field_record), (size_t)n_part2_in, fp);
+	fclose(fp);
+	if((int)nread != n_part2_in){
+		printf("[mean] load_mean_field: record read short (%zu / %d)\n",
+		       nread, n_part2_in);
+		free(host_rec);
+		return 0;
+	}
+
+	mean_field_record* dev_rec = NULL;
+	cudaMalloc((void**)&dev_rec, sizeof(mean_field_record) * (size_t)n_part2_in);
+	cudaMemcpy(dev_rec, host_rec,
+	           sizeof(mean_field_record) * (size_t)n_part2_in,
+	           cudaMemcpyHostToDevice);
+
+	dim3 t(128), b((n_part2_in - 1) / 128 + 1);
+	KERNEL_apply_mean_field<<<b, t>>>(dev_P1, dev_rec);
+	cudaDeviceSynchronize();
+
+	cudaFree(dev_rec);
+	free(host_rec);
+
+	// Restore reference scalars updated by MOST at freeze time
+	cudaMemcpyToSymbol(us_update,        &hdr.us_update,        sizeof(float));
+	cudaMemcpyToSymbol(OB_length_global, &hdr.OB_length_global, sizeof(float));
+
+	printf("[mean] loaded %d records, avg_count_at_dump=%u, us=%.4f, OB=%.4e <- %s\n",
+	       n_part2_in, hdr.avg_count_at_dump, hdr.us_update, hdr.OB_length_global, path);
+	return 1;
+}

@@ -1,0 +1,6 @@
+branch=consistent-ppe
+sha=50f000ef773a59c6034320dad0bf05476960cf78
+dirty= +uncommitted
+host=user
+created=2026-10-20 15:34:36
+restart=-

@@ -139,7 +139,7 @@ int main(int argc,char**argv)
 
 	ngpu=atoi(argv[1]);
 
-	char fn[64],fn2[64];
+	char fn[256],fn2[256];
 	strcpy(fn,SOLV_SPH_PATH);
 	strcpy(fn2,"./input/data.txt");
 

@@ -243,7 +243,7 @@ __global__ void KERNEL_Neumann_boundary3D(int_t*g_str,int_t*g_end,part1*P1,part2
 		if(P1[i].p_type==-1){
 			P1[i].ux=tux/tflt_s;
 			P1[i].uy=tuy/tflt_s;
-			P1[i].uz=tuz/tflt_s;
+			P1[i].uz=-tuz/tflt_s;
 		}
 		//if(P1[i].p_type==0) P1[i].pres=0.0;
 		if(P1[i].buffer_type==1 || P1[i].buffer_type==-1) P1[i].pres = pres_g+(xi-xgnode_i)*grad_px+(yi-ygnode_i)*grad_py+(zi-zgnode_i)*grad_pz;
@@ -563,6 +563,90 @@ __global__ void KERNEL_donothing_buffer3D(int_t*g_str,int_t*g_end,part1*P1,part2
 	else{
 		P1[i].pres = tpres;
 	}
+}
+
+// =======================================================================
+// Convective outflow BC (Orlanski 1976) for outlet buffer (buffer_type==2).
+//   ∂u/∂t + U_c · ∂u/∂x = 0   →   u^{n+1} = u^n - C·(u^n - u_inner)
+//   C = U_c · dt / dx   (clamped to [0,1])
+// u_inner = SPH-interpolated velocity over upstream (xj<xi) interior fluid.
+// Pressure is anchored to 0 to prevent accumulation. Temperature follows
+// the same convective rule.
+// =======================================================================
+__global__ void KERNEL_convective_outflow3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3,Real tdt)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].buffer_type!=2) return;
+
+	Real xi=P1[i].x, yi=P1[i].y, zi=P1[i].z;
+	Real hi=P1[i].h, tmp_A=calc_tmpA(hi);
+	Real search_range=k_search_kappa*hi;
+
+	int_t icell,jcell,kcell;
+	if(k_x_max==k_x_min){icell=0;} else{icell=min(floor((xi-k_x_min)/k_dcell),k_NI-1);}
+	if(k_y_max==k_y_min){jcell=0;} else{jcell=min(floor((yi-k_y_min)/k_dcell),k_NJ-1);}
+	if(k_z_max==k_z_min){kcell=0;} else{kcell=min(floor((zi-k_z_min)/k_dcell),k_NK-1);}
+	if(icell<0)icell=0; if(jcell<0)jcell=0; if(kcell<0)kcell=0;
+
+	Real sumW=0, ux_in=0, uy_in=0, uz_in=0, T_in=0, dxw=0;
+	int_t ncell=P1[i].ncell;
+	for(int_t z=-ncell;z<=ncell;z++){
+		for(int_t y=-ncell;y<=ncell;y++){
+			for(int_t x=-ncell;x<=ncell;x++){
+				int_t k=idx_cell(icell+x,jcell+y,kcell+z);
+				if(((icell+x)<0)||((icell+x)>(k_NI-1))||((jcell+y)<0)||((jcell+y)>(k_NJ-1))||((kcell+z)<0)||((kcell+z)>(k_NK-1))) continue;
+				if(g_str[k]==cu_memset) continue;
+				int_t fend=g_end[k];
+				for(int_t j=g_str[k];j<fend;j++){
+					if(P1[j].buffer_type!=0) continue;     // interior only
+					if(P1[j].p_type!=1)      continue;     // fluid only
+					Real xj=P1[j].x;
+					if(xj>=xi) continue;                   // upstream of buffer
+					Real yj=P1[j].y, zj=P1[j].z;
+					Real tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj));
+					if(tdist>=search_range) continue;
+					Real W=calc_kernel_wij(tmp_A,hi,tdist);
+					Real volj=P1[j].m/P1[j].rho;
+					sumW  += volj*W;
+					dxw   += volj*W*(xi-xj);               // upstream offset (>0)
+					ux_in += P1[j].ux  *volj*W;
+					uy_in += P1[j].uy  *volj*W;
+					uz_in += P1[j].uz  *volj*W;
+					T_in  += P1[j].temp*volj*W;
+				}
+			}
+		}
+	}
+
+	if(sumW<(Real)1e-12){
+		// no upstream neighbour found: anchor pressure only, leave velocity unchanged
+		P1[i].pres=0.0f;
+		return;
+	}
+	ux_in/=sumW; uy_in/=sumW; uz_in/=sumW; T_in/=sumW;
+
+	// dx: kernel-weighted upstream distance to the point u_inner actually represents.
+	// (Not the cell size: u_inner is a kernel average over the support kappa*h.)
+	Real dx = dxw/sumW;
+	if(dx < (Real)1e-6) dx = k_dcell;
+
+	// Uc: convection speed. OUTFLOW_UC>0 pins it to a constant (control runs);
+	// otherwise use the local interpolated streamwise velocity, so the log
+	// profile gives a z-dependent phase speed for free.
+	Real Uc = (Real)OUTFLOW_UC;
+	if(Uc <= (Real)0.0) Uc = ux_in;
+	if(Uc <  (Real)0.0) Uc = 0.0f;         // reverse flow: freeze, keep pressure anchor
+
+	Real C  = Uc * tdt / dx;
+	if(C>1.0f) C=1.0f;
+	if(C<0.0f) C=0.0f;
+
+	P1[i].ux   = P1[i].ux   - C*(P1[i].ux   - ux_in);
+	P1[i].uy   = P1[i].uy   - C*(P1[i].uy   - uy_in);
+	P1[i].uz   = P1[i].uz   - C*(P1[i].uz   - uz_in);
+	P1[i].temp = P1[i].temp - C*(P1[i].temp - T_in);
+	P1[i].pres = 0.0f;
 }
 
 __global__ void KERNEL_open_boundary_extrapolation_buffer3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,part3*P3)
@@ -1700,3 +1784,83 @@ __global__ void KERNEL_Recycling3D(int_t*g_str,int_t*g_end,part1*P1,part2*P2,par
 		return;
 	}
 }
+
+// =======================================================================
+// Rayleigh damping (sponge) layer near the ceiling.
+//   γ(z) = SPONGE_GAMMA_MAX × ramp²,  ramp = (z - Z_BOTTOM)/(z_top - Z_BOTTOM)
+//   uz   *= max(0, 1 - γ·dt)   [ux left alone; uy too when SPONGE_DAMP_UY=1]
+// Absorbs grid-scale vertical oscillations / gravity waves trapped under a
+// reflective (freeslip) ceiling without distorting the streamwise mean flow.
+// =======================================================================
+__global__ void KERNEL_sponge_ceiling(part1* P1, Real tdt)
+{
+	uint_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if(i >= k_num_part2)               return;
+	if(P1[i].i_type > i_type_crt)      return;
+	if(P1[i].p_type != FLUID)          return;
+
+	Real zi = P1[i].z;
+	if(zi < (Real)SPONGE_Z_BOTTOM)     return;
+
+	Real z_top = k_z_max;
+	Real span  = z_top - (Real)SPONGE_Z_BOTTOM;
+	if(span <= (Real)0.0)              return;
+
+	Real ramp = (zi - (Real)SPONGE_Z_BOTTOM) / span;
+	if(ramp < (Real)0.0) ramp = (Real)0.0;
+	if(ramp > (Real)1.0) ramp = (Real)1.0;
+
+	Real gamma  = (Real)SPONGE_GAMMA_MAX * ramp * ramp;
+	Real damp   = (Real)1.0 - gamma * tdt;
+	if(damp < (Real)0.0) damp = (Real)0.0;
+
+	P1[i].uz *= damp;
+	// Cross-stream mean is zero in these cases (INIT_CROSSFLOW_UY=0), so damping uy toward 0
+	// removes the ceiling shear mode that survives uz-only damping (2026-09-15, t=120~130 s).
+	if(SPONGE_DAMP_UY) P1[i].uy *= damp;
+}
+
+#if INFLOW_TURB
+// 유입 합성 난류 모드 (Parameters.cuh INFLOW_TURB). [n][0..2]=k, [3]=ω, [4..6]=p, [7..9]=q
+__constant__ Real k_itm[INFLOW_TURB_N][10];
+
+void init_inflow_turb()
+{
+	static Real h[INFLOW_TURB_N][10];
+	unsigned long long s=INFLOW_TURB_SEED;
+	auto u01=[&](){ s^=s<<13; s^=s>>7; s^=s<<17; return ((s>>11)+0.5)/9007199254740992.0; };
+	auto gau=[&](){ double r=sqrt(-2.0*log(u01())); return r*cos(2.0*PI*u01()); };
+	double var[3]={0,0,0};
+	for(int n=0;n<INFLOW_TURB_N;n++){
+		double k[3],z1[3],z2[3];
+		for(int a=0;a<3;a++){ k[a]=gau()*sqrt(0.5); z1[a]=gau(); z2[a]=gau(); }
+		double p[3]={z1[1]*k[2]-z1[2]*k[1], z1[2]*k[0]-z1[0]*k[2], z1[0]*k[1]-z1[1]*k[0]};   // p = ζ×k → k·p = 0
+		double q[3]={z2[1]*k[2]-z2[2]*k[1], z2[2]*k[0]-z2[0]*k[2], z2[0]*k[1]-z2[1]*k[0]};
+		for(int a=0;a<3;a++){ h[n][a]=k[a]; h[n][4+a]=p[a]; h[n][7+a]=q[a]; var[a]+=(p[a]*p[a]+q[a]*q[a])/INFLOW_TURB_N; }
+		h[n][3]=gau();
+	}
+	for(int n=0;n<INFLOW_TURB_N;n++) for(int a=0;a<3;a++){ Real c=1.0/sqrt(var[a]); h[n][4+a]*=c; h[n][7+a]*=c; }   // 성분별 분산 1
+	cudaMemcpyToSymbol(k_itm,h,sizeof(h));
+}
+
+__global__ void KERNEL_inflow_turb3D(part1*P1, Real ttime)
+{
+	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i>=k_num_part2) return;
+	if(P1[i].buffer_type!=Inlet || P1[i].p_type!=1 || P1[i].MOST_buffer==1) return;
+	Real z=P1[i].z;
+	if(z<=0.0) return;
+	Real U=10.0*pow(z/L_ceiling,(Real)ABL_ALPHA);                 // Interpolate_ux_ABL 과 같은 기본 프로파일
+	Real Iu=fmin(1.0/log(fmax(z,1.01*INFLOW_TURB_Z0)/INFLOW_TURB_Z0),(Real)INFLOW_TURB_IMAX);
+	Real su=Iu*U, sv=0.75*su, sw=0.5*su;
+	Real xt=(P1[i].x-INFLOW_TURB_UC*ttime)/INFLOW_TURB_L, yt=P1[i].y/INFLOW_TURB_L, zt=z/INFLOW_TURB_L;
+	Real tt=ttime*INFLOW_TURB_UC/INFLOW_TURB_L;
+	Real u=0.0, v=0.0, w=0.0;
+	for(int n=0;n<INFLOW_TURB_N;n++){
+		Real ph=k_itm[n][0]*xt+k_itm[n][1]*yt+k_itm[n][2]*zt+k_itm[n][3]*tt, c=cos(ph), s=sin(ph);
+		u+=k_itm[n][4]*c+k_itm[n][7]*s; v+=k_itm[n][5]*c+k_itm[n][8]*s; w+=k_itm[n][6]*c+k_itm[n][9]*s;
+	}
+	Real a=sqrt(2.0/INFLOW_TURB_N);
+	P1[i].ux=U+a*su*u; P1[i].uy=a*sv*v; P1[i].uz=a*sw*w;
+}
+#endif

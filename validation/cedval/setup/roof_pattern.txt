@@ -1,0 +1,20 @@
+# CEDVAL Complexity 2 (BL3-2-1) roof types, read from Complexity_3-2-1_cube_array1.pdf
+# rows top->bottom = x from +252 to -252 (wind toward +x), step 36 m
+# even rows (15): y centers 252-36k ; odd rows (14): y centers 234-36k
+# F flat 18 m | X flat 27 m | H ridge drawn along y (wall 18, ridge 27) | V ridge drawn along x (wall 18, ridge 27)
+# axis-line artifacts corrected at rows 2,6 (col 7 -> F) and row 7 (from 12-row period)
+FXFVFHFXFVFHFXF
+VFHFXFVFHFXFVF
+HFXFVFHFXFVFHFX
+FVFHFXFVFHFXFV
+FHFXFVFHFXFVFHF
+XFVFHFXFVFHFXF
+VFHFXFVFHFXFVFH
+FXFVFHFXFVFHFX
+FVFHFXFVFHFXFVF
+HFXFVFHFXFVFHF
+XFVFHFXFVFHFXFV
+FHFXFVFHFXFVFH
+FXFVFHFXFVFHFXF
+VFHFXFVFHFXFVF
+HFXFVFHFXFVFHFX

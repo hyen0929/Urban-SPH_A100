@@ -1,0 +1,6 @@
+branch=consistent-ppe
+sha=50f000ef773a59c6034320dad0bf05476960cf78
+dirty= +uncommitted
+host=user
+created=2026-10-16 13:32:49
+restart=runs/2026-09-15_leipzig-dt01-sponge-uy/out/restart.bin

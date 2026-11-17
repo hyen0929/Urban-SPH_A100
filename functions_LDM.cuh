@@ -25,7 +25,7 @@ __global__ void particle_releasing_Dispersion(Real tdt,int freq,Real ttime,Real 
 	// 	}
 	// }
 
-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
+	if(ttime >= LP1[i].t_release){
 		LP1[i].i_type=1;
 	}
 }
@@ -36,7 +36,7 @@ __global__ void particle_releasing_Dispersion_Gaussian(Real tdt,int freq,Real tt
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==1) return;
 
-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
+	if(ttime >= LP1[i].t_release){
 		LP1[i].i_type=1;
 
 		// RNG 초기화
@@ -77,7 +77,7 @@ __global__ void particle_releasing_Dispersion_Kernel(Real tdt,int freq,Real ttim
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==1) return;
 
-	if(ttime - (Real)AVG_START_TIME >= LP1[i].t_release){
+	if(ttime >= LP1[i].t_release){
 		LP1[i].i_type=1;
 
 		// RNG 초기화
@@ -122,7 +122,7 @@ __global__ void KERNEL_clc_predictor_Dispersion(Real tdt,Real ttime,L_part1*LP1,
 	if(i>=k_num_part_LDM) return;
 	//if(LP1[i].p_type==0) return;
 	if(LP1[i].i_type==3) return;
-	if(LP1[i].buffer_type==1) return;  // deposited: skip predictor
+	if(LP1[i].buffer_type!=0) return;  // deposited (1=지면, 2=벽면): skip predictor
 
 	int_t p_typei;
 	double tmp;
@@ -488,7 +488,7 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	uint_t i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i>=k_num_part_LDM) return;
 	if(LP1[i].i_type==3) return;
-	if(LP1[i].buffer_type==1) return;  // deposited: skip advection (handled by KERNEL_dry_deposition)
+	if(LP1[i].buffer_type!=0) return;  // deposited (1=지면, 2=벽면): skip advection (handled by KERNEL_dry_deposition)
 
 	unsigned long long seed;
 	curandState ss;
@@ -527,6 +527,11 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	k_turb=e_turb=0.0;
 
 	Real tmp_flt=0.0;
+
+	// IBM (building) no-penetration: live color-gradient surface normal + nearest distance
+	Real gnx=0.0, gny=0.0, gnz=0.0;   // outward normal (from building toward particle)
+	Real solid_w=0.0;                 // accumulated IBM kernel weight (proximity measure)
+	Real near_d=(Real)1e20;           // nearest IBM particle distance
 
 	tx0=LP2[i].x0;														// x-directional initial position
 	ty0=LP2[i].y0;														// x-directional initial position
@@ -614,6 +619,24 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 								tmp_flt += (mj/rhoj)*twij;
 							}
 						}
+						else if(P1[j].p_type>=1000){   // IBM building: build color-gradient normal
+							xj=P1[j].x;
+							yj=P1[j].y;
+							zj=P1[j].z;
+							hj=P1[j].h;
+
+							search_range=k_search_kappa*fmax(hi,hj);
+							tdist=sqrt((xi-xj)*(xi-xj)+(yi-yj)*(yi-yj)+(zi-zj)*(zi-zj))+1e-20;
+
+							if(tdist<search_range){
+								Real twij=calc_kernel_wij(tmp_A,hi,tdist);
+								gnx+=(xi-xj)/tdist*twij;   // outward (away from building surface)
+								gny+=(yi-yj)/tdist*twij;
+								gnz+=(zi-zj)/tdist*twij;
+								solid_w+=twij;
+								if(tdist<near_d) near_d=tdist;
+							}
+						}
 					}
 				}
 			}
@@ -682,14 +705,41 @@ __global__ void KERNEL_time_update_LDM(const Real tdt, Real tt, Real tend, int_t
 	yc=ty0+(ywind+uyc)*(t_dt);												// correct Y-directional position
 	zc=tz0+(zwind+uzc)*(t_dt);
 
+	// ------------------------------------------------------------------
+	// Building (IBM) no-penetration: specular reflection off the live
+	// color-gradient surface normal (per-particle IBM normals are
+	// unreliable for multi-building geometry, so rebuild it here).
+	// Reflect the displacement (and stored turbulent velocity) only when
+	// the particle is within ~half a spacing of the wall AND moving inward.
+	// ------------------------------------------------------------------
+	if(solid_w>1e-12){
+		Real nmag=sqrt(gnx*gnx+gny*gny+gnz*gnz)+1e-20;
+		Real nxh=gnx/nmag, nyh=gny/nmag, nzh=gnz/nmag;     // outward normal
+		Real dpx=xc-tx0, dpy=yc-ty0, dpz=zc-tz0;           // this-step displacement
+		Real dn=dpx*nxh+dpy*nyh+dpz*nzh;                   // along outward normal
+		Real dx_sp=hi/(Real)h_coeff;                       // particle spacing
+		Real d_ref = ((Real)LDM_WALL_REFLECT_D > (Real)0.0)
+		           ? (Real)LDM_WALL_REFLECT_D : (Real)0.5*dx_sp;
+		if(near_d < d_ref && dn < (Real)0.0){              // near wall & moving inward
+			xc=tx0+(dpx-(Real)2.0*dn*nxh);                 // reflect displacement (specular)
+			yc=ty0+(dpy-(Real)2.0*dn*nyh);
+			zc=tz0+(dpz-(Real)2.0*dn*nzh);
+			Real un=uxc*nxh+uyc*nyh+uzc*nzh;               // reflect stored velocity
+			uxc-=(Real)2.0*un*nxh;
+			uyc-=(Real)2.0*un*nyh;
+			uzc-=(Real)2.0*un*nzh;
+		}
+	}
+
 	// Ground reflection (z <= L1)
 	if(zc <= (Real)L1){
 		zc = (Real)(2.0*L1) - zc;
 		uzc = -uzc;
 	}
-	// Ceiling reflection (z >= L3)
-	if(zc >= (Real)L3){
-		zc = (Real)(2.0*L3) - zc;
+	// Ceiling reflection (z >= L_ceiling).  L3 is the streamwise outlet coordinate,
+	// not a height -- comparing zc against it disabled ceiling reflection entirely.
+	if(zc >= (Real)L_ceiling){
+		zc = (Real)(2.0*L_ceiling) - zc;
 		uzc = -uzc;
 	}
 

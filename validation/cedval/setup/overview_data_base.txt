@@ -1,0 +1,69 @@
+Data base:
+
+Complexity 0: flow within an "empty" boundary-layer (only roughness elements on test section)
+Complexity 1: flow around an isolated obstacle
+Complexity 2: flow within regular arrays of obstacles (highly idealized urban geometry)
+Complexity 3: flow within a realistic but still idealized urban geometry
+Complexity 4: flow within a realistic urban geometry
+
+These folders contain time series as well as the documentations of the experiments 
+including pictures and drawings.
+
+
+*****
+
+Measurement facilities:
+
+The experiments were done in two boundary layer wind tunnels in the EWTL of the University of Hamburg.
+
+Wind tunnel "WOTAN":
+- total length of 25 m, width of 4 m, height from 2.75 to 3.25 m
+- the test section is 18 m long and has two turn tables to model different approach flow directions
+- a adjustable ceiling allows to degree the longitudinal pressure gradient in the test section
+- measurements at wind speeds up to 15 m/s are possible
+- the instruments can be moved with a 3D probe positioning system (accuracy of 0.1 mm at all axes)
+
+Wind tunnel "BLASIUS":
+- total length of 16 m, width of 1.5 m, height of about 1 m
+- the test section is 4 m long and has one turn table
+- a adjustable ceiling allows to degree the longitudinal pressure gradient in the test section
+- measurements at wind speeds up to 10 m/s are possible
+- the instruments can be moved with a 3D probe positioning system (accuracy of 0.1 mm at all axes)
+
+
+Instruments:
+
+- Prandtl tube to measure the reference wind speed
+- 2D Laser-Doppler-Anemometry (LDA) for highly time resolved flow measurements (around 500-600 Hz)
+  with a focal length between 50 mm and 800 mm depending to the measurement setup
+- two 2D LDA systems allow synchronised correlation measurements
+- 3D Particle-Image-Velocimetry system (PIV) for highly spatial resolved flow measurements,
+  temporal resolution only 15 Hz
+- independent reference instruments to calibrate the used measurement instruments
+
+
+*****
+
+Data processing:
+
+A software package guarantees a fast automatic data processing for the huge amount of measured data.
+
+Scaling to get dimensionless values:
+
+- reference length of 1 m in model scale
+- reference height of 100 m in full scale
+- reference wind speed is the wind speed at the reference height
+
+
+All processed data files include a detailed header about:
+
+- scale
+- reference height
+- reference length
+- reference wind speed
+- wind tunnel
+- coordinates of the location of the measured time series in model scale as well as in full scale
+
+
+*****
+

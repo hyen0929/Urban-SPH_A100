@@ -4204,4 +4204,48 @@ void save_vtk_bin_single_vorticity(part1*P1,part2*P2,part3*P3)
 
 
 	fclose(outFile_vtk);
+}////////////////////////////////////////////////////////////////////////
+// 가벼운 순간 속도장: z < TRANSIENT_DUMP_ZMAX 유체 입자의 (ux,uy,uz) float32 만 쓴다.
+// Eulerian SPH 라 입자 위치·정렬 순서가 고정이므로 좌표는 transient_xyz.bin 에 한 번만 쓴다.
+// 머리의 key = Σ (k+1)·x_k (선택 순서 k) 로 순서까지 확인한다. key 가 바뀌면
+// transient_xyz_<count>stp.bin 을 새로 쓰고, 읽는 쪽은 key 가 같은 좌표 파일을 고른다.
+// 필드 이름에 count/time 금지 — function_init.cuh 매크로(vii[27], vif[3])로 치환되어 헤더가 144 B 가 된다
+typedef struct{ char magic[8]; int32_t step; float t; int32_t n; int32_t pad; double key; } TransientHdr;
+
+static inline int transient_sel(const part1&p)
+{
+	return p.p_type==FLUID && (p.i_type==1||p.i_type==2) && p.z<(Real)TRANSIENT_DUMP_ZMAX;
+}
+
+void save_transient_velocity(part1*P1, Real ttime)
+{
+	static int_t n_ref=-1;
+	static double key_ref=0.0;
+	int_t i,k,nop=num_part2,n=0;
+	double key=0.0;
+	for(i=0;i<nop;i++) if(transient_sel(P1[i])){ n++; key+=(double)n*P1[i].x; }
+
+	TransientHdr hd; memset(&hd,0,sizeof(hd));
+	hd.step=count; hd.t=(float)ttime; hd.n=n; hd.key=key;
+	char FileName[256];
+	FILE*f;
+	float*buf=(float*)malloc(sizeof(float)*3*(n>0?n:1));
+
+	if(n!=n_ref || fabs(key-key_ref)>1e-9*fabs(key_ref)){
+		if(n_ref<0) sprintf(FileName,"./%s/transient_xyz.bin",OUTPUT_DIR_NAME);
+		else{
+			sprintf(FileName,"./%s/transient_xyz_%dstp.bin",OUTPUT_DIR_NAME,count);
+			printf("[transient] 입자 선택/순서가 바뀌어 좌표를 다시 씀 (n %d -> %d)\n",n_ref,n);
+		}
+		memcpy(hd.magic,"SPHXYZ1",8);
+		for(i=0,k=0;i<nop;i++) if(transient_sel(P1[i])){ buf[3*k]=P1[i].x; buf[3*k+1]=P1[i].y; buf[3*k+2]=P1[i].z; k++; }
+		f=fopen(FileName,"wb"); fwrite(&hd,sizeof(hd),1,f); fwrite(buf,sizeof(float),3*n,f); fclose(f);
+		n_ref=n; key_ref=key;
+	}
+
+	memcpy(hd.magic,"SPHUVW1",8);
+	for(i=0,k=0;i<nop;i++) if(transient_sel(P1[i])){ buf[3*k]=P1[i].ux; buf[3*k+1]=P1[i].uy; buf[3*k+2]=P1[i].uz; k++; }
+	sprintf(FileName,"./%s/transient_u_%dstp.bin",OUTPUT_DIR_NAME,count);
+	f=fopen(FileName,"wb"); fwrite(&hd,sizeof(hd),1,f); fwrite(buf,sizeof(float),3*n,f); fclose(f);
+	free(buf);
 }

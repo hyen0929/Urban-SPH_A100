@@ -17,11 +17,38 @@ make
 # Run (argument = number of GPUs)
 ./SOPHIA_gpu 1
 
-# Target architecture: sm_80 (A100 / RTX 30-series)
-# To change GPU arch, edit -arch=sm_80 in Makefile
+# Target architecture: sm_80 (A100 / RTX 30-series). Override: make ARCH=sm_86
 ```
 
 There are no tests, linters, or CI pipelines. Validation is done via Python analysis scripts against analytical solutions or experimental data.
+
+## Running experiments — use `exp/`, not a hand-edited Parameters.cuh
+
+**Never edit `Parameters.cuh` to switch cases or flags for an experiment.** The
+experiment-relevant `#define`s are wrapped in `#ifndef` guards (same default values),
+so they are overridden with `-D` at build time instead:
+
+```bash
+exp/run.sh <slug> -m "왜 돌리는지" -i <INPUT_CASE> -t <tag> -g <gpu> -D FLAG=VAL ...
+exp/status.sh            # 전체 상태     exp/status.sh <run>   상세
+exp/watch.sh <run>       # 이상 시에만 종료하는 감시
+exp/report.sh <run>      # 로그·진단파일 → RUN.md 3절 측정값 기록
+```
+
+Every experiment becomes `runs/<date>_<slug>/` holding `RUN.md` (목적/설정/결과/결론),
+`out/` (VTK, gitignored), `analysis/` (그림·스크립트), and `env/` (재현 정보 일체:
+정확한 nvcc 명령, Parameters.cuh 스냅샷, 소스 diff, solv 사본, 바이너리).
+`runs/INDEX.md` is the ledger. `-m` (목적) is mandatory.
+
+Full convention: [docs/EXPERIMENT_WORKFLOW.md](docs/EXPERIMENT_WORKFLOW.md).
+Old output directories live in `archive/` (gitignored).
+
+**Checkpoint / restart** (single GPU): build with `-D CKPT_EVERY=N` → full state written to
+`<OUTPUT_CASE_NAME>/restart.bin` every N steps (previous kept as `.prev`). Resume by running the
+**same binary** with `SOPHIA_RESTART=<path>`; a mismatch or corrupt file aborts. Verified bit-identical
+to an uninterrupted run (`runs/2026-09-14_ckpt-restart-verify`). If you add state that persists across
+steps (globals, statics, `__device__` variables, arrays built once), add it to `save_checkpoint`/`load_checkpoint`
+in `ISPH_Calc.cuh`.
 
 ## Architecture
 
@@ -92,6 +119,8 @@ Building surfaces represented as single-layer particles (p_type=1000). Three-ste
 IBM kernel size controlled by `IBM_length * h` (Parameters.cuh). Search range = `kappa * IBM_length * h`.
 
 **Known issue**: IBM particle mass must be consistent with actual particle spacing. Sub-grid IBM particles (from STL mesh conversion) with mass set for coarser spacing cause over-counting in the spreading step.
+
+**Interior fluid flagging (buildings/terrain)**: fluid particles inside buildings or below terrain must be flagged `p_type=99` in the input file (init maps 99 → `buffer_type=99`, `functions_NNPS.cuh`), otherwise they stay live in the PPE/IBM. Use `python/flag_interior_heightfield.py <input.txt> [--vtk]`: column-max heightfield from the p_type≥1000 surface particles, `interior ⟺ z ≤ z_top(x,y)`. Needs no STL/normals/watertight mesh; surface particles need not be on a lattice. Check the printed "overhang candidates" count (those columns are treated as solid). Do not use `--hole-fill` on ~1 m-sampled surfaces (it cuts concave corners). Old STL ray-cast / 3D BFS scripts in `python/` are superseded — they leak on non-watertight OSM meshes.
 
 **Known issue (PPE iteration count is fixed at 1)**: [ISPH_Calc.cuh:250](ISPH_Calc.cuh#L250) hardcodes `for(int_t it=0; it<=0; it++)` — only one Jacobi sweep per timestep. The solv-file fields `minimum-iteration` / `maximum-iteration` are parsed (`minIteration`, `maxIteration`) but **not** used in the PPE loop. Confirmed empirically that increasing `it<n` does **not** resolve wake/bluff-body velocity spikes, so don't bother suggesting "raise PPE iteration count" as a fix for those.
 

@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────
+# SOPHIA_gpu — 추적 제외 목록
+#
+# 실험 산출물은 runs/<날짜>_<슬러그>/ 아래에만 생긴다 (exp/run.sh).
+#   runs/*/out/      VTK·진단파일 → 재생성 가능하므로 추적 안 함
+#   runs/*/RUN.md    실험 기록    → 추적함
+#   runs/*/analysis/ 그림·분석    → 추적함
+#   runs/INDEX.md    실험 대장    → 추적함
+# 새 실험을 만들어도 이 파일을 고칠 필요는 없다.
+# ─────────────────────────────────────────────────────────────
+
+# ── 실험 산출물 ──
+runs/*/out/
+runs/*/env/build.log
+
+# ── 옛 출력 디렉토리 (2026-09-08 archive/ 로 이동) ──
+archive/
+
+# ── 출력 파일 (확장자 기준) ──
+*.vtk
+mean_field.bin
+*.o
+
+# ── 로그 ──
+*.log
+*_monitor.txt
+nohup.out
+
+# ── 컴파일 산출물 ──
+SOPHIA_gpu
+SOPHIA_exp
+SOPHIA_exp_fair
+SOPHIA_iisph*
+SOPHIA_kgc_smoke
+
+# ── 에디터 / OS / 파이썬 ──
+.vscode/
+.DS_Store
+__pycache__/
+Yelyn/
+
+# ── 입력 파일 (입자 데이터, 용량 큼) ──
+input/
+
+# ── 대용량 결과·데이터·문서 (2026-11-17 GitHub 업로드 시 제외) ──
+python/.venv/
+puff/data/
+*.pptx
+*.docx
+*.zip
+*.npz
+*.npy
+*.bin
+*.prev
+# 런별 실행 바이너리 사본
+runs/*/env/SOPHIA_*
+runs/NUTHOS15_*

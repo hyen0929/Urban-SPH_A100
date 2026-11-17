@@ -95,6 +95,7 @@ typedef struct particles_array_3{
 
 	Real dk_turb, de_turb;        // Turbulent kinetic energy, dissipation rate(for Deardorff model,KDH)
 	Real SR;                      // |S| strain-rate magnitude, written by KERNEL_clc_prep3D for k-eps
+	Real gux[3],guy[3],guz[3];    // ∇ux,∇uy,∇uz (KGC), KERNEL_clc_prep3D 가 씀 — RIEMANN_EULERV>=2 재구성용
 	// Real virial,radius;
 
 	Real cc;
@@ -108,6 +109,12 @@ typedef struct particles_array_3{
 	// Real A[Correction_Matrix_Size][Correction_Matrix_Size];
 	Real inv_cm_xx,inv_cm_yy,inv_cm_zz;
 	Real inv_cm_xy,inv_cm_yz,inv_cm_zx;
+
+	// IISPH consistent-operator PPE (Parameters.cuh CONSISTENT_PPE). Per-step scratch:
+	Real dii_x,dii_y,dii_z;   // d_ii = -dt^2/rho_i^2 * sum_j m_j gradW_ij  (i's displacement / unit p_i)
+	Real dx_x,dx_y,dx_z;      // Delta x_i = d_ii*p_i + sum_j d_ij*p_j      (pressure displacement, per sweep)
+	Real iisph_aii;           // diagonal a_ii  (negative)
+	Real iisph_src;           // source s_i = rho_0 - rho*_i
 }part3;
 ///////////////////////////////////////////////////////////////////////////
 typedef struct p2p_particles_array_3{

@@ -35,6 +35,7 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
   	Real akti = nui/Prt_sgs;
   	Real dTdx, dTdy, dTdz;
   	Real Tk;
+	Real gu[3][3]={{0}};          // gu[a][b] = ∂u_a/∂x_b
 
   	dTdx=dTdy=dTdz=Tk=0.0;
 
@@ -112,6 +113,15 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 
 							// filter (exclude interior fluid buffer_type==99 so flt_s reflects effective neighborhood near building corners)
 							if((tcount%k_freq_filt)==0 && P1[j].buffer_type!=99) tmp_flt+=mj/rhoj*tmp_wij;
+
+#if RIEMANN_EULERV>=2
+							if(ptypej==1 && P1[j].buffer_type!=99){
+								Real gx=tdwx,gy=tdwy,gz=tdwz;
+								apply_gradient_correction_3D(P3[i].Cm,tmp_wij,gx,gy,gz,&gx,&gy,&gz);
+								Real Vj=mj/rhoj, du[3]={uxj-uxi,uyj-uyi,uzj-uzi};
+								for(int a=0;a<3;a++){ gu[a][0]+=Vj*du[a]*gx; gu[a][1]+=Vj*du[a]*gy; gu[a][2]+=Vj*du[a]*gz; }
+							}
+#endif
 
 							// strain rate
 							if((k_fv_solve!=0)&&(k_turbulence_model!=Laminar))
@@ -207,6 +217,9 @@ __global__ void KERNEL_clc_prep3D(int_t*g_str,int_t*g_end,part1*P1, part2*P2, pa
 
 	// filter
 	if((tcount%k_freq_filt)==0) P1[i].flt_s=tmp_flt;
+#if RIEMANN_EULERV>=2
+	for(int b=0;b<3;b++){ P3[i].gux[b]=gu[0][b]; P3[i].guy[b]=gu[1][b]; P3[i].guz[b]=gu[2][b]; }
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////

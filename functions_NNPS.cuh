@@ -62,6 +62,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 		if(CASE_ID>1000 && CASE_ID<1100) {
 			HP1[i].ux=Interpolate_ux_ABL(HP1[i].z);
 			//HP1[i].ux=1.5*Interpolate_ux_caseA(HP1[i].z,0.08);
+			HP1[i].uy=(Real)INIT_CROSSFLOW_UY;   // global cross-flow initial velocity (0 = none)
 			HP1[i].k_turb=0.0;
 		}
 		if(CASE_ID==2001) HP1[i].ux=0.0;	// Scalar transport test
@@ -104,7 +105,7 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 			HP1[i].uy = 0.0;
 			HP1[i].uz = 0.0;
 		}
-
+		
 
 		// // Inner building particle ux=0.0
 		// if(HP1[i].p_type==1 && zi<0.2){
@@ -199,6 +200,14 @@ void c_initial_inner_outer_particle_single(part1*HP1,part1*DHP1,int_t tid){
 				// }
 			}
 		}
+
+		if(CASE_ID==501){
+			if(HP1[i].z>110 && HP1[i].buffer_type==0){
+				HP1[i].p_type=-1;
+			}
+		}
+
+		
 		DHP1[c_count]=HP1[i];
 		c_count++;
 	}
